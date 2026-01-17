@@ -20,6 +20,7 @@
 #include <numeric>
 #include <fmt/chrono.h>
 #include <fmt/core.h>
+#include <iostream>
 
 #include "champsim.h"
 #include "deadlock.h"
@@ -46,7 +47,7 @@ PageTableWalker::PageTableWalker(champsim::ptw_builder b)
 }
 
 PageTableWalker::mshr_type::mshr_type(const request_type& req, std::size_t level)
-    : address(req.address), v_address(req.v_address), instr_depend_on_me(req.instr_depend_on_me), pf_metadata(req.pf_metadata), cpu(req.cpu),
+    : address(req.address), v_address(req.v_address), metadata(req.metadata), instr_depend_on_me(req.instr_depend_on_me), pf_metadata(req.pf_metadata), cpu(req.cpu),
       translation_level(level)
 {
   asid[0] = req.asid[0];
@@ -68,12 +69,13 @@ auto PageTableWalker::handle_read(const request_type& handle_pkt, channel_type* 
   mshr_type fwd_mshr{handle_pkt, walk_init.level};
   fwd_mshr.address = champsim::address{champsim::splice(champsim::page_number{walk_init.ptw_addr}, champsim::page_offset{walk_offset})};
   fwd_mshr.v_address = handle_pkt.address;
+  fwd_mshr.metadata = handle_pkt.metadata;
   if (handle_pkt.response_requested) {
     fwd_mshr.to_return = {&ul->returned};
   }
 
   if constexpr (champsim::debug_print) {
-    fmt::print("[{}] {} address: {} v_address: {} pt_page_offset: {} translation_level: {} cycle: {}\n", NAME, __func__, fwd_mshr.address, handle_pkt.v_address,
+    fmt::print("[{}] {} address: {} v_address: {} metadata: {} pt_page_offset: {} translation_level: {} cycle: {}\n", NAME, __func__, fwd_mshr.address, handle_pkt.v_address, handle_pkt.metadata, 
                walk_offset.to<int>(), walk_init.level, current_time.time_since_epoch() / clock_period);
   }
 
@@ -104,6 +106,7 @@ auto PageTableWalker::step_translation(const mshr_type& source) -> std::optional
   request_type packet;
   packet.address = source.address;
   packet.v_address = source.v_address;
+  packet.metadata = source.metadata;
   packet.pf_metadata = source.pf_metadata;
   packet.cpu = source.cpu;
   packet.asid[0] = source.asid[0];
@@ -136,7 +139,7 @@ long PageTableWalker::operate()
   auto [complete_begin, complete_end] = champsim::get_span_p(std::cbegin(completed), std::cend(completed), fill_bw, is_ready);
   std::for_each(complete_begin, complete_end, [](auto& mshr_entry) {
     for (auto ret : mshr_entry.to_return) {
-      ret->emplace_back(mshr_entry.v_address, mshr_entry.v_address, *mshr_entry.data, mshr_entry.pf_metadata, mshr_entry.instr_depend_on_me);
+      ret->emplace_back(mshr_entry.v_address, mshr_entry.v_address, false, *mshr_entry.data, mshr_entry.pf_metadata, mshr_entry.instr_depend_on_me);
     }
   });
   fill_bw.consume(std::distance(complete_begin, complete_end));
@@ -144,6 +147,7 @@ long PageTableWalker::operate()
 
   auto [mshr_begin, mshr_end] = champsim::get_span_p(std::cbegin(finished), std::cend(finished), fill_bw, is_ready);
   std::tie(mshr_begin, mshr_end) = champsim::get_span_p(mshr_begin, mshr_end, [&next_steps, this](const auto& pkt) {
+    assert(!pkt.metadata);
     auto result = this->handle_fill(pkt);
     if (result.has_value()) {
       next_steps.emplace_back(*result);
@@ -157,6 +161,8 @@ long PageTableWalker::operate()
   for (auto* ul : upper_levels) {
     auto [rq_begin, rq_end] = champsim::get_span_p(std::cbegin(ul->RQ), std::cend(ul->RQ), tag_bw, [&next_steps, ul, this](const auto& pkt) {
       auto result = this->handle_read(pkt, ul);
+      std::flush(std::cout);
+      assert(!pkt.metadata);
       if (result.has_value()) {
         next_steps.emplace_back(*result);
       }
@@ -206,8 +212,8 @@ void PageTableWalker::finish_packet(const response_type& packet)
     return champsim::waitable{champsim::address{ppage}, this->current_time + penalty + (this->warmup ? champsim::chrono::clock::duration{} : HIT_LATENCY)};
   };
 
-  auto matches_addr = [block = champsim::block_number{packet.address}](auto x) {
-    return champsim::block_number{x.address} == block;
+  auto matches_addr = [block = champsim::block_number{packet.address}, metadata = packet.metadata](auto x) {
+    return champsim::block_number{x.address} == block && x.metadata == metadata;
   };
   auto is_last_step = [](auto x) {
     return x.translation_level <= 0;
@@ -235,8 +241,8 @@ void PageTableWalker::begin_phase()
 // LCOV_EXCL_START Exclude the following function from LCOV
 void PageTableWalker::print_deadlock()
 {
-  champsim::range_print_deadlock(MSHR, NAME + "_MSHR", "address: {} v_address: {} translation_level: {}", [](const auto& entry) {
-    return std::tuple{entry.address, entry.v_address, entry.translation_level};
+  champsim::range_print_deadlock(MSHR, NAME + "_MSHR", "address: {} v_address: {} metadata: {} translation_level: {}", [](const auto& entry) {
+    return std::tuple{entry.address, entry.v_address, entry.metadata, entry.translation_level};
   });
 }
 // LCOV_EXCL_STOP

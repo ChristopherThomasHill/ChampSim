@@ -60,6 +60,7 @@ class CACHE : public champsim::operable
   struct tag_lookup_type {
     champsim::address address;
     champsim::address v_address;
+    bool metadata;
     champsim::address data;
     champsim::address ip;
     uint64_t instr_id;
@@ -88,6 +89,7 @@ public:
   struct mshr_type {
     champsim::address address;
     champsim::address v_address;
+    bool metadata;
     champsim::address ip;
     uint64_t instr_id;
 
@@ -142,7 +144,7 @@ private:
   template <typename T>
   champsim::address module_address(const T& element) const;
 
-  auto matches_address(champsim::address address) const;
+  auto matches_address(champsim::address address, bool metadata) const;
   std::pair<mshr_type, request_type> mshr_and_forward_packet(const tag_lookup_type& handle_pkt);
 
   std::deque<tag_lookup_type> internal_PQ{};

@@ -53,6 +53,7 @@ class PageTableWalker : public champsim::operable
   struct mshr_type {
     champsim::address address{};
     champsim::address v_address{};
+    bool metadata;
     champsim::waitable<champsim::address> data{};
 
     std::vector<uint64_t> instr_depend_on_me{};

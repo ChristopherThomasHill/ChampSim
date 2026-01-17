@@ -62,6 +62,7 @@ class channel
 
     champsim::address address{};
     champsim::address v_address{};
+    bool metadata;
     champsim::address data{};
     uint64_t instr_id = 0;
     champsim::address ip{};
@@ -72,15 +73,16 @@ class channel
   struct response {
     champsim::address address{};
     champsim::address v_address{};
+    bool metadata;
     champsim::address data{};
     uint32_t pf_metadata = 0;
     std::vector<uint64_t> instr_depend_on_me{};
 
-    response(champsim::address addr, champsim::address v_addr, champsim::address data_, uint32_t pf_meta, std::vector<uint64_t> deps)
-        : address(addr), v_address(v_addr), data(data_), pf_metadata(pf_meta), instr_depend_on_me(deps)
+    response(champsim::address addr, champsim::address v_addr, bool meta, champsim::address data_, uint32_t pf_meta, std::vector<uint64_t> deps)
+        : address(addr), v_address(v_addr), metadata(meta), data(data_), pf_metadata(pf_meta), instr_depend_on_me(deps)
     {
     }
-    explicit response(request req) : response(req.address, req.v_address, req.data, req.pf_metadata, req.instr_depend_on_me) {}
+    explicit response(request req) : response(req.address, req.v_address, req.metadata, req.data, req.pf_metadata, req.instr_depend_on_me) {}
   };
 
   template <typename R>

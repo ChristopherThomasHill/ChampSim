@@ -105,6 +105,7 @@ struct DRAM_CHANNEL final : public champsim::operable {
 
     champsim::address address{};
     champsim::address v_address{};
+    bool metadata = false;
     champsim::address data{};
     champsim::chrono::clock::time_point ready_time = champsim::chrono::clock::time_point::max();
 

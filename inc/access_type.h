@@ -26,6 +26,8 @@ enum class access_type : unsigned {
   PREFETCH,
   WRITE,
   TRANSLATION,
+  METADATA_LOAD,
+  METADATA_STORE,
   NUM_TYPES,
 };
 

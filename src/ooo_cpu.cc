@@ -270,6 +270,7 @@ bool O3_CPU::do_fetch_instruction(std::deque<ooo_model_instr>::iterator begin, s
 {
   CacheBus::request_type fetch_packet;
   fetch_packet.v_address = begin->ip;
+  fetch_packet.metadata = false;
   fetch_packet.instr_id = begin->instr_id;
   fetch_packet.ip = begin->ip;
 
@@ -606,11 +607,12 @@ bool O3_CPU::do_complete_store(const LSQ_ENTRY& sq_entry)
 {
   CacheBus::request_type data_packet;
   data_packet.v_address = sq_entry.virtual_address;
+  data_packet.metadata = false;
   data_packet.instr_id = sq_entry.instr_id;
   data_packet.ip = sq_entry.ip;
 
   if constexpr (champsim::debug_print) {
-    fmt::print("[SQ] {} instr_id: {} vaddr: {}\n", __func__, data_packet.instr_id, data_packet.v_address);
+    fmt::print("[SQ] {} instr_id: {} vaddr: {} metadata: {}\n", __func__, data_packet.instr_id, data_packet.v_address, data_packet.metadata);
   }
 
   return L1D_bus.issue_write(data_packet);
@@ -620,11 +622,12 @@ bool O3_CPU::execute_load(const LSQ_ENTRY& lq_entry)
 {
   CacheBus::request_type data_packet;
   data_packet.v_address = lq_entry.virtual_address;
+  data_packet.metadata = false;
   data_packet.instr_id = lq_entry.instr_id;
   data_packet.ip = lq_entry.ip;
 
   if constexpr (champsim::debug_print) {
-    fmt::print("[LQ] {} instr_id: {} vaddr: {}\n", __func__, data_packet.instr_id, data_packet.v_address);
+    fmt::print("[LQ] {} instr_id: {} vaddr: {} metadata: {}\n", __func__, data_packet.instr_id, data_packet.v_address, data_packet.metadata);
   }
 
   return L1D_bus.issue_read(data_packet);

@@ -64,7 +64,7 @@ bool do_collision_for_return(Iter begin, Iter end, champsim::channel::request_ty
 {
   return do_collision_for(begin, end, packet, shamt, [&](champsim::channel::request_type& source, champsim::channel::request_type& destination) {
     if (source.response_requested) {
-      returned.emplace_back(source.address, source.v_address, destination.data, destination.pf_metadata, source.instr_depend_on_me);
+      returned.emplace_back(source.address, source.v_address,  source.metadata, destination.data, destination.pf_metadata, source.instr_depend_on_me);
     }
   });
 }
@@ -133,7 +133,7 @@ bool champsim::channel::do_add_queue(R& queue, std::size_t queue_size, const typ
 bool champsim::channel::add_rq(const request_type& packet)
 {
   if constexpr (champsim::debug_print) {
-    fmt::print("[channel_rq] {} instr_id: {} address: {} v_address: {} type: {}\n", __func__, packet.instr_id, packet.address, packet.v_address,
+    fmt::print("[channel_rq] {} instr_id: {} address: {} v_address: {} metadata: {} type: {}\n", __func__, packet.instr_id, packet.address, packet.v_address, packet.metadata,
                access_type_names.at(champsim::to_underlying(packet.type)));
   }
 
@@ -153,7 +153,7 @@ bool champsim::channel::add_rq(const request_type& packet)
 bool champsim::channel::add_wq(const request_type& packet)
 {
   if constexpr (champsim::debug_print) {
-    fmt::print("[channel_wq] {} instr_id: {} address: {} v_address: {} type: {}\n", __func__, packet.instr_id, packet.address, packet.v_address,
+    fmt::print("[channel_wq] {} instr_id: {} address: {} v_address: {} metadata: {} type: {}\n", __func__, packet.instr_id, packet.address, packet.v_address, packet.metadata,
                access_type_names.at(champsim::to_underlying(packet.type)));
   }
 
