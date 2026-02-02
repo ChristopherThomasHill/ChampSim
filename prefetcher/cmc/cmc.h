@@ -1,0 +1,109 @@
+#ifndef PREFETCHER_CMC_H
+#define PREFETCHER_CMC_H
+
+#include <cstdint>
+#include <deque>
+
+#include "champsim.h"
+#include "channel.h"
+#include "metadata.h"
+#include "modules.h"
+
+class cmc : public champsim::modules::prefetcher
+{
+  using channel_type = champsim::channel;
+  using request_type = typename channel_type::request_type;
+  using prefetcher::prefetcher;
+
+  CACHE* cache = nullptr;
+  champsim::channel cache_channel;
+
+  const unsigned int trigger_buffer_size = 4;
+  const int degree = 4;
+
+  class RecordEntry
+  {
+  
+  public:
+    champsim::address pc;
+    champsim::block_number block_addr;
+    RecordEntry(champsim::address _pc, champsim::block_number _block_addr)
+        : pc(_pc), block_addr(_block_addr) {}
+  };
+
+  std::deque<RecordEntry> trigger;
+
+  class Recorder
+  {
+  
+  public:
+    std::vector<champsim::block_number> entries;
+    int index;
+    const int degree;
+    Recorder(int d) : entries(), index(0), degree(d) {}
+    bool entry_empty() { return entries.empty(); }
+    champsim::block_number get_base_addr() { return entries[0]; }
+
+    bool train_entry(champsim::block_number block_addr);
+    void reset();
+    const int nr_entry = 16;
+  };
+
+  Recorder* recorder;
+
+  struct CMCRequest : public champsim::MetadataRequest 
+  {
+    enum class request_type : unsigned {
+      LOAD = 0,
+      STORE
+    };
+
+    request_type type;
+
+    champsim::address pc;
+    champsim::block_number block_addr;
+
+    // Load
+    bool covered;
+
+    // Store
+    std::vector<champsim::block_number> entries;
+
+    CMCRequest(request_type _type, champsim::address _pc, champsim::block_number _block_addr, bool _covered)
+        : type(_type), pc(_pc), block_addr(_block_addr), covered(_covered)
+    {
+    }
+
+    CMCRequest(request_type _type, champsim::address _pc, champsim::block_number _block_addr)
+        : type(_type), pc(_pc), block_addr(_block_addr)
+    {
+    }
+
+    bool is_write() override { return type == request_type::STORE; }
+    bool is_read() override { return type == request_type::LOAD; }
+  };
+
+  struct CMCBlock : public champsim::MetadataBlk
+  {
+    std::vector<champsim::block_number> addresses;
+  };
+
+  champsim::address metadata_addr(champsim::address ip, champsim::block_number block_addr);
+  void send_metadata_load(champsim::address ip, champsim::block_number block_addr, bool covered);
+  void send_metadata_store(champsim::address ip, champsim::block_number block_addr, std::vector<champsim::block_number> entries);
+
+public:
+
+  std::map<champsim::address, champsim::block_number> training_unit;
+
+  void prefetcher_initialize();
+  uint32_t prefetcher_cache_operate(champsim::address, champsim::address, uint8_t, bool, access_type, uint32_t metadata_in);
+  uint32_t prefetcher_cache_fill(champsim::address, long, long, uint8_t, champsim::address, uint32_t metadata_in);
+  void prefetcher_cycle_operate();
+  void prefetcher_final_stats();
+
+  void prefetcher_metadata_request_fill(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk);
+  void prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk> blk, bool hit);
+};
+
+#endif
