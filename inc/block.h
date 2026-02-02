@@ -17,7 +17,11 @@
 #ifndef BLOCK_H
 #define BLOCK_H
 
+#include <memory>
+#include <optional>
+
 #include "champsim.h"
+#include "metadata.h"
 
 namespace champsim
 {
@@ -32,6 +36,7 @@ struct cache_block {
   champsim::address data{};
 
   uint32_t pf_metadata = 0;
+  std::shared_ptr<MetadataBlk> metadata_blk = nullptr;
 };
 } // namespace champsim
 

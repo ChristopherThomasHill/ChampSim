@@ -29,6 +29,7 @@
 #include <iterator> // for size
 #include <limits>   // for numeric_limits
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -42,6 +43,7 @@
 #include "champsim.h"
 #include "channel.h"
 #include "chrono.h"
+#include "metadata.h"
 #include "modules.h"
 #include "operable.h"
 #include "util/to_underlying.h" // for to_underlying
@@ -81,6 +83,8 @@ class CACHE : public champsim::operable
     std::vector<uint64_t> instr_depend_on_me{};
     std::vector<std::deque<response_type>*> to_return{};
 
+    std::shared_ptr<champsim::MetadataRequest> metadata_request = nullptr;
+
     explicit tag_lookup_type(request_type req) : tag_lookup_type(req, false, false) {}
     tag_lookup_type(const request_type& req, bool local_pref, bool skip);
   };
@@ -110,6 +114,8 @@ public:
     std::vector<uint64_t> instr_depend_on_me{};
     std::vector<std::deque<response_type>*> to_return{};
 
+    std::shared_ptr<champsim::MetadataRequest> metadata_request = nullptr;
+
     mshr_type(const tag_lookup_type& req, champsim::chrono::clock::time_point _time_enqueued);
     static mshr_type merge(mshr_type predecessor, mshr_type successor);
   };
@@ -128,7 +134,7 @@ public:
   using BLOCK = champsim::cache_block;
 
 private:
-  static BLOCK fill_block(mshr_type mshr, uint32_t metadata);
+  static BLOCK fill_block(mshr_type mshr, uint32_t metadata, std::shared_ptr<champsim::MetadataBlk> metadata_blk);
   using set_type = std::vector<BLOCK>;
 
   std::pair<set_type::iterator, set_type::iterator> get_set_span(champsim::address address);
@@ -209,9 +215,9 @@ public:
   [[nodiscard]] std::vector<double> get_pq_occupancy_ratio() const;
 
   [[deprecated("Use get_set_index() instead.")]] [[nodiscard]] uint64_t get_set(uint64_t address) const;
-  [[deprecated("This function should not be used to access the blocks directly.")]] [[nodiscard]] uint64_t get_way(uint64_t address, uint64_t set) const;
+  // [[deprecated("This function should not be used to access the blocks directly.")]] [[nodiscard]] uint64_t get_way(uint64_t address, uint64_t set) const;
 
-  long invalidate_entry(champsim::address inval_addr);
+  long invalidate_entry(champsim::address inval_addr, bool is_metadata);
   bool prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata);
 
   [[deprecated]] bool prefetch_line(uint64_t pf_addr, bool fill_this_level, uint32_t prefetch_metadata);
@@ -236,6 +242,9 @@ public:
     virtual void impl_prefetcher_cycle_operate() = 0;
     virtual void impl_prefetcher_final_stats() = 0;
     virtual void impl_prefetcher_branch_operate(champsim::address ip, uint8_t branch_type, champsim::address branch_target) = 0;
+
+    virtual void impl_prefetcher_metadata_request_fill(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk) = 0;
+    virtual void impl_prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk> blk, bool hit) = 0;
   };
 
   struct replacement_module_concept {
@@ -270,6 +279,9 @@ public:
     void impl_prefetcher_cycle_operate() final;
     void impl_prefetcher_final_stats() final;
     void impl_prefetcher_branch_operate(champsim::address ip, uint8_t branch_type, champsim::address branch_target) final;
+
+    void impl_prefetcher_metadata_request_fill(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk) final;
+    void impl_prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk> blk, bool hit) final;
   };
 
   template <typename... Rs>
@@ -306,6 +318,8 @@ public:
   void impl_prefetcher_cycle_operate() const;
   void impl_prefetcher_final_stats() const;
   void impl_prefetcher_branch_operate(champsim::address ip, uint8_t branch_type, champsim::address branch_target) const;
+  void impl_prefetcher_metadata_request_fill(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk) const;
+  void impl_prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk> blk, bool hit) const;
 
   void impl_initialize_replacement() const;
   [[nodiscard]] long impl_find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const BLOCK* current_set, champsim::address ip,
@@ -420,6 +434,32 @@ void CACHE::prefetcher_module_model<Ps...>::impl_prefetcher_branch_operate(champ
       p.prefetcher_branch_operate(ip, branch_type, branch_target);
     if constexpr (prefetcher::has_branch_operate<decltype(p), uint64_t, uint8_t, uint64_t>)
       p.prefetcher_branch_operate(ip.to<uint64_t>(), branch_type, branch_target.to<uint64_t>());
+  };
+
+  std::apply([&](auto&... p) { (..., process_one(p)); }, intern_);
+}
+
+template <typename... Ps>
+void CACHE::prefetcher_module_model<Ps...>::impl_prefetcher_metadata_request_fill(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk)
+{
+  [[maybe_unused]] auto process_one = [&](auto& p) {
+    using namespace champsim::modules;
+    if constexpr (prefetcher::metadata_request_fill<decltype(p), const std::shared_ptr<champsim::MetadataRequest>&, std::shared_ptr<champsim::MetadataBlk>&>)
+    {
+      p.prefetcher_metadata_request_fill(request, blk);
+    }
+  };
+
+  std::apply([&](auto&... p) { (..., process_one(p)); }, intern_);
+}
+
+template <typename... Ps>
+void CACHE::prefetcher_module_model<Ps...>::impl_prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk> blk, bool hit)
+{
+  [[maybe_unused]] auto process_one = [&](auto& p) {
+    using namespace champsim::modules;
+    if constexpr (prefetcher::metadata_request_update<decltype(p), const std::shared_ptr<champsim::MetadataRequest>&, std::shared_ptr<champsim::MetadataBlk>, bool>)
+      p.prefetcher_metadata_request_update(request, blk, hit);
   };
 
   std::apply([&](auto&... p) { (..., process_one(p)); }, intern_);

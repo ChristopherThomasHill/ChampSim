@@ -94,13 +94,13 @@ auto CACHE::operator=(CACHE&& other) -> CACHE&
 
 CACHE::tag_lookup_type::tag_lookup_type(const request_type& req, bool local_pref, bool skip)
     : address(req.address), v_address(req.v_address), metadata(req.metadata), data(req.data), ip(req.ip), instr_id(req.instr_id), pf_metadata(req.pf_metadata), cpu(req.cpu),
-      type(req.type), prefetch_from_this(local_pref), skip_fill(skip), is_translated(req.is_translated), instr_depend_on_me(req.instr_depend_on_me)
+      type(req.type), prefetch_from_this(local_pref), skip_fill(skip), is_translated(req.is_translated), instr_depend_on_me(req.instr_depend_on_me), metadata_request(req.metadata_request)
 {
 }
 
 CACHE::mshr_type::mshr_type(const tag_lookup_type& req, champsim::chrono::clock::time_point _time_enqueued)
     : address(req.address), v_address(req.v_address), metadata(req.metadata), ip(req.ip), instr_id(req.instr_id), cpu(req.cpu), type(req.type),
-      prefetch_from_this(req.prefetch_from_this), time_enqueued(_time_enqueued), instr_depend_on_me(req.instr_depend_on_me), to_return(req.to_return)
+      prefetch_from_this(req.prefetch_from_this), time_enqueued(_time_enqueued), instr_depend_on_me(req.instr_depend_on_me), to_return(req.to_return), metadata_request(req.metadata_request)
 {
 }
 
@@ -138,7 +138,7 @@ CACHE::mshr_type CACHE::mshr_type::merge(mshr_type predecessor, mshr_type succes
   return retval;
 }
 
-auto CACHE::fill_block(mshr_type mshr, uint32_t metadata) -> BLOCK
+auto CACHE::fill_block(mshr_type mshr, uint32_t metadata, std::shared_ptr<champsim::MetadataBlk> metadata_blk) -> BLOCK
 {
   CACHE::BLOCK to_fill;
   to_fill.valid = true;
@@ -149,14 +149,15 @@ auto CACHE::fill_block(mshr_type mshr, uint32_t metadata) -> BLOCK
   to_fill.metadata = mshr.metadata;
   to_fill.data = mshr.data_promise->data;
   to_fill.pf_metadata = metadata;
+  to_fill.metadata_blk = metadata_blk;
 
   return to_fill;
 }
 
 auto CACHE::matches_address(champsim::address addr, bool metadata) const
 {
-  return [match = addr.slice_upper(OFFSET_BITS), shamt = OFFSET_BITS](const auto& entry) {
-    return entry.address.slice_upper(shamt) == match;
+  return [match = addr.slice_upper(OFFSET_BITS), shamt = OFFSET_BITS, metadata](const auto& entry) {
+    return entry.address.slice_upper(shamt) == match && entry.metadata == metadata;
   };
 }
 
@@ -190,7 +191,7 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
                (fill_mshr.time_enqueued.time_since_epoch()) / clock_period, (current_time.time_since_epoch()) / clock_period);
   }
 
-  if (way != set_end && way->valid && way->dirty) {
+  if (way != set_end && way->valid && way->dirty && !way->metadata) {
     request_type writeback_packet;
 
     writeback_packet.cpu = fill_mshr.cpu;
@@ -233,7 +234,12 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
       ++sim_stats.pf_fill;
     }
 
-    *way = fill_block(fill_mshr, metadata_thru);
+    std::shared_ptr<champsim::MetadataBlk> metadata_blk = nullptr;
+    if (fill_mshr.metadata)
+    {
+      impl_prefetcher_metadata_request_fill(fill_mshr.metadata_request, metadata_blk);
+    }
+    *way = fill_block(fill_mshr, metadata_thru, metadata_blk);
   }
 
   // COLLECT STATS
@@ -255,7 +261,7 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 
   // access cache
   auto [set_begin, set_end] = get_set_span(handle_pkt.address);
-  auto way = std::find_if(set_begin, set_end, [matcher = matches_address(handle_pkt.address)](const auto& x) { return x.valid && matcher(x); });
+  auto way = std::find_if(set_begin, set_end, [matcher = matches_address(handle_pkt.address, handle_pkt.metadata)](const auto& x) { return x.valid && matcher(x); });
   const auto hit = (way != set_end);
   const auto useful_prefetch = (hit && way->prefetch && !handle_pkt.prefetch_from_this);
 
@@ -274,6 +280,10 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
   const auto way_idx = std::distance(set_begin, way);
   impl_update_replacement_state(handle_pkt.cpu, get_set_index(handle_pkt.address), way_idx, module_address(handle_pkt), handle_pkt.ip, {}, handle_pkt.type,
                                 hit);
+
+  if (handle_pkt.metadata) {
+    impl_prefetcher_metadata_request_update(handle_pkt.metadata_request, way->metadata_blk, hit);
+  }
 
   if (hit) {
     sim_stats.hits.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
@@ -317,6 +327,8 @@ auto CACHE::mshr_and_forward_packet(const tag_lookup_type& handle_pkt) -> std::p
   fwd_pkt.instr_depend_on_me = handle_pkt.instr_depend_on_me;
   fwd_pkt.response_requested = (!handle_pkt.prefetch_from_this || !handle_pkt.skip_fill);
 
+  fwd_pkt.metadata_request = handle_pkt.metadata_request;
+
   return std::pair{std::move(to_allocate), std::move(fwd_pkt)};
 }
 
@@ -328,7 +340,7 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
                current_time.time_since_epoch() / clock_period);
   }
 
-  if (handle_pkt.type == access_type::METADATA_LOAD) {
+  if (handle_pkt.type == access_type::METADATA && handle_pkt.metadata_request->is_read()) {
     // Metadata loads should not propegate
   
     response_type response{
@@ -349,6 +361,11 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
     return true;
   }
 
+  if (handle_pkt.type == access_type::METADATA && handle_pkt.metadata_request->is_write()) {
+    // Metadata stores should not propegate
+    return handle_write(handle_pkt);
+  }
+
   mshr_type to_allocate{handle_pkt, current_time};
 
   cpu = handle_pkt.cpu;
@@ -356,7 +373,7 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
   auto mshr_pkt = mshr_and_forward_packet(handle_pkt);
 
   // check mshr
-  auto mshr_entry = std::find_if(std::begin(MSHR), std::end(MSHR), matches_address(handle_pkt.address));
+  auto mshr_entry = std::find_if(std::begin(MSHR), std::end(MSHR), matches_address(handle_pkt.address, handle_pkt.metadata));
   bool mshr_full = (MSHR.size() == MSHR_SIZE);
 
   if (mshr_entry != MSHR.end()) // miss already inflight
@@ -576,19 +593,19 @@ auto CACHE::get_set_span(champsim::address address) const -> std::pair<set_type:
   return get_span(std::cbegin(block), static_cast<set_type::difference_type>(set_idx), NUM_WAY); // safe cast because of prior assert
 }
 
-// LCOV_EXCL_START exclude deprecated function
-uint64_t CACHE::get_way(uint64_t address, uint64_t /*unused set index*/) const
-{
-  champsim::address intern_addr{address};
-  auto [begin, end] = get_set_span(intern_addr);
-  return static_cast<uint64_t>(std::distance(begin, std::find_if(begin, end, matches_address(champsim::address{address}))));
-}
+// // LCOV_EXCL_START exclude deprecated function
+// uint64_t CACHE::get_way(uint64_t address, uint64_t /*unused set index*/) const
+// {
+//   champsim::address intern_addr{address};
+//   auto [begin, end] = get_set_span(intern_addr);
+//   return static_cast<uint64_t>(std::distance(begin, std::find_if(begin, end, matches_address(champsim::address{address}))));
+// }
 // LCOV_EXCL_STOP
 
-long CACHE::invalidate_entry(champsim::address inval_addr)
+long CACHE::invalidate_entry(champsim::address inval_addr, bool is_metadata)
 {
   auto [begin, end] = get_set_span(inval_addr);
-  auto inv_way = std::find_if(begin, end, matches_address(inval_addr));
+  auto inv_way = std::find_if(begin, end, matches_address(inval_addr, is_metadata));
 
   if (inv_way != end) {
     inv_way->valid = false;
@@ -635,7 +652,7 @@ bool CACHE::prefetch_line(uint64_t /*deprecated*/, uint64_t /*deprecated*/, uint
 void CACHE::finish_packet(const response_type& packet)
 {
   // check MSHR information
-  auto mshr_entry = std::find_if(std::begin(MSHR), std::end(MSHR), matches_address(packet.address));
+  auto mshr_entry = std::find_if(std::begin(MSHR), std::end(MSHR), matches_address(packet.address, packet.metadata));
   auto first_unreturned = std::find_if(MSHR.begin(), MSHR.end(), [](auto x) { return x.data_promise.has_unknown_readiness(); });
 
   // sanity check
@@ -839,6 +856,16 @@ void CACHE::impl_prefetcher_final_stats() const { pref_module_pimpl->impl_prefet
 void CACHE::impl_prefetcher_branch_operate(champsim::address ip, uint8_t branch_type, champsim::address branch_target) const
 {
   pref_module_pimpl->impl_prefetcher_branch_operate(ip, branch_type, branch_target);
+}
+
+void CACHE::impl_prefetcher_metadata_request_fill(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk) const
+{
+  pref_module_pimpl->impl_prefetcher_metadata_request_fill(request, blk);
+}
+    
+void CACHE::impl_prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk> blk, bool hit) const
+{
+  pref_module_pimpl->impl_prefetcher_metadata_request_update(request, blk, hit);
 }
 
 void CACHE::impl_initialize_replacement() const { repl_module_pimpl->impl_initialize_replacement(); }

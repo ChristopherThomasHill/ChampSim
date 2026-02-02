@@ -21,12 +21,15 @@
 #include <cstdint>
 #include <deque>
 #include <limits>
+#include <memory>
+#include <optional>
 #include <string_view>
 #include <vector>
 
 #include "access_type.h"
 #include "address.h"
 #include "champsim.h"
+#include "metadata.h"
 
 namespace champsim
 {
@@ -68,6 +71,8 @@ class channel
     champsim::address ip{};
 
     std::vector<uint64_t> instr_depend_on_me{};
+
+    std::shared_ptr<MetadataRequest> metadata_request = nullptr;
   };
 
   struct response {

@@ -135,6 +135,16 @@ struct prefetcher : public bound_to<CACHE> {
   static auto branch_operate_member_impl(long) -> std::false_type;
 
   template <typename T, typename... Args>
+  static auto prefetcher_metadata_request_fill_impl(int) -> decltype(std::declval<T>().prefetcher_metadata_request_fill(std::declval<Args>()...), std::true_type{});
+  template <typename, typename...>
+  static auto prefetcher_metadata_request_fill_impl(long) -> std::false_type;
+
+  template <typename T, typename... Args>
+  static auto prefetcher_metadata_request_update_impl(int) -> decltype(std::declval<T>().prefetcher_metadata_request_update(std::declval<Args>()...), std::true_type{});
+  template <typename, typename...>
+  static auto prefetcher_metadata_request_update_impl(long) -> std::false_type;
+
+  template <typename T, typename... Args>
   constexpr static bool has_initialize = decltype(initiailize_memory_impl<T, Args...>(0))::value;
 
   template <typename T, typename... Args>
@@ -151,6 +161,12 @@ struct prefetcher : public bound_to<CACHE> {
 
   template <typename T, typename... Args>
   constexpr static bool has_branch_operate = decltype(branch_operate_member_impl<T, Args...>(0))::value;
+
+  template <typename T, typename... Args>
+  constexpr static bool metadata_request_fill = decltype(prefetcher_metadata_request_fill_impl<T, Args...>(0))::value;
+
+  template <typename T, typename... Args>
+  constexpr static bool metadata_request_update = decltype(prefetcher_metadata_request_update_impl<T, Args...>(0))::value;
 };
 
 struct replacement : public bound_to<CACHE> {

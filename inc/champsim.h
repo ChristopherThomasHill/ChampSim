@@ -42,7 +42,7 @@ struct deadlock : public std::exception {
 #ifdef DEBUG_PRINT
 constexpr bool debug_print = true;
 #else
-constexpr bool debug_print = true;
+constexpr bool debug_print = false;
 #endif
 
 template <typename Extent>

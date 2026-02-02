@@ -37,7 +37,7 @@ bool do_collision_for(Iter begin, Iter end, champsim::channel::request_type& pac
   // (not translated) is inserted, package with physical address
   // (already translated) X.
   if (auto found =
-          std::find_if(begin, end, [match = packet.address.slice_upper(shamt), shamt](const auto& x) { return x.address.slice_upper(shamt) == match; });
+          std::find_if(begin, end, [match = packet.address.slice_upper(shamt), shamt, metadata = packet.metadata](const auto& x) { return x.address.slice_upper(shamt) == match && x.metadata == metadata; });
       found != end && packet.is_translated == found->is_translated) {
     func(packet, *found);
     return true;
