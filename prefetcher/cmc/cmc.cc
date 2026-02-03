@@ -54,14 +54,14 @@ void cmc::send_metadata_load(champsim::address ip, champsim::block_number block_
   packet.cpu = this->cache->cpu;
   packet.instr_id = 0;
   packet.ip = ip;
-  packet.type = access_type::METADATA;
+  packet.type = access_type::METADATA_LOAD;
   packet.metadata = true;
   packet.metadata_request = std::make_shared<CMCRequest>(CMCRequest::request_type::LOAD, ip, block_addr, covered);
 
-  bool success = this->cache_channel.add_rq(packet);
+  /*bool success =*/ this->cache_channel.add_rq(packet);
   
-  if (success)
-    printf("Sent Load address:%lx ip:%lx block_addr:%lx\n", metadata_addr(ip, block_addr).to<uint64_t>(), ip.to<uint64_t>(), block_addr.to<uint64_t>());
+  // if (success)
+  //   printf("Sent Load address:%lx ip:%lx block_addr:%lx\n", metadata_addr(ip, block_addr).to<uint64_t>(), ip.to<uint64_t>(), block_addr.to<uint64_t>());
 }
 
 void cmc::send_metadata_store(champsim::address ip, champsim::block_number block_addr, std::vector<champsim::block_number> entries)
@@ -73,14 +73,14 @@ void cmc::send_metadata_store(champsim::address ip, champsim::block_number block
   packet.cpu = this->cache->cpu;
   packet.instr_id = 0;
   packet.ip = ip;
-  packet.type = access_type::METADATA;
+  packet.type = access_type::METADATA_STORE;
   packet.metadata = true;
-  packet.metadata_request = std::make_shared<CMCRequest>(CMCRequest::request_type::STORE, ip, block_addr);
+  packet.metadata_request = std::make_shared<CMCRequest>(CMCRequest::request_type::STORE, ip, block_addr, entries);
 
-  bool success = this->cache_channel.add_wq(packet);
+  /*bool success =*/ this->cache_channel.add_wq(packet);
 
-  if (success)
-    printf("Sent Store address:%lx ip:%lx block_addr:%lx\n", metadata_addr(ip, block_addr).to<uint64_t>(), ip.to<uint64_t>(), block_addr.to<uint64_t>());
+  // if (success)
+    // printf("Sent Store address:%lx ip:%lx block_addr:%lx\n", metadata_addr(ip, block_addr).to<uint64_t>(), ip.to<uint64_t>(), block_addr.to<uint64_t>());
 }
 
 void cmc::prefetcher_initialize()
@@ -93,7 +93,7 @@ void cmc::prefetcher_initialize()
 uint32_t cmc::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint8_t cache_hit, bool useful_prefetch, access_type type, uint32_t metadata_in)
 {
   // Don't prefetch metadata
-  if (type == access_type::METADATA) {
+  if (type == access_type::METADATA_LOAD || type == access_type::METADATA_STORE) {
     return metadata_in;
   }
 
@@ -132,7 +132,7 @@ void cmc::prefetcher_final_stats()
 
 void cmc::prefetcher_metadata_request_fill(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk)
 {
-  CMCRequest& cmc_request = *dynamic_cast<CMCRequest*>(request.get());
+  CMCRequest& cmc_request = *static_cast<CMCRequest*>(request.get());
   // printf("Request Fill %u %lx %lx\n", cmc_request.type, cmc_request.pc.to<uint64_t>(), cmc_request.block_addr.to<uint64_t>());
 
   assert(cmc_request.type == CMCRequest::request_type::STORE);
@@ -145,14 +145,13 @@ void cmc::prefetcher_metadata_request_fill(const std::shared_ptr<champsim::Metad
 
 void cmc::prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk> blk, bool hit)
 {
-  CMCRequest& cmc_request = *dynamic_cast<CMCRequest*>(request.get());
+  CMCRequest& cmc_request = *static_cast<CMCRequest*>(request.get());
   // printf("Request Update %u %lx %lx %u %u\n", cmc_request.type, cmc_request.pc.to<uint64_t>(), cmc_request.block_addr.to<uint64_t>(), cmc_request.covered, hit);
 
   if (cmc_request.type == CMCRequest::request_type::LOAD)
   {
     if (hit)
     {
-      printf("Load Hit %u\n", cmc_request.covered);
       if (!cmc_request.covered)
       {
         cache->invalidate_entry(metadata_addr(cmc_request.pc, cmc_request.block_addr), true /*metadata*/);
@@ -162,7 +161,6 @@ void cmc::prefetcher_metadata_request_update(const std::shared_ptr<champsim::Met
         CMCBlock& cmc_blk = *static_cast<CMCBlock*>(blk.get());
 
         for (auto pf_block: cmc_blk.addresses) {
-          printf("Prefetch %lx\n", champsim::address(pf_block).to<uint64_t>());
           prefetch_line(champsim::address(pf_block), true, 0 /*prefetch_metadata*/);
         }
       }

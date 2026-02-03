@@ -74,13 +74,10 @@ class cmc : public champsim::modules::prefetcher
     {
     }
 
-    CMCRequest(request_type _type, champsim::address _pc, champsim::block_number _block_addr)
-        : type(_type), pc(_pc), block_addr(_block_addr)
+    CMCRequest(request_type _type, champsim::address _pc, champsim::block_number _block_addr, std::vector<champsim::block_number> _entries)
+        : type(_type), pc(_pc), block_addr(_block_addr), entries(_entries)
     {
     }
-
-    bool is_write() override { return type == request_type::STORE; }
-    bool is_read() override { return type == request_type::LOAD; }
   };
 
   struct CMCBlock : public champsim::MetadataBlk

@@ -340,7 +340,7 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
                current_time.time_since_epoch() / clock_period);
   }
 
-  if (handle_pkt.type == access_type::METADATA && handle_pkt.metadata_request->is_read()) {
+  if (handle_pkt.type == access_type::METADATA_LOAD) {
     // Metadata loads should not propegate
   
     response_type response{
@@ -361,7 +361,7 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
     return true;
   }
 
-  if (handle_pkt.type == access_type::METADATA && handle_pkt.metadata_request->is_write()) {
+  if (handle_pkt.type == access_type::METADATA_STORE) {
     // Metadata stores should not propegate
     return handle_write(handle_pkt);
   }
