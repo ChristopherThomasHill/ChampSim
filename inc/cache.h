@@ -188,6 +188,9 @@ public:
   void begin_phase() final;
   void end_phase(unsigned cpu) final;
 
+  bool in_cache(champsim::address address, bool metadata);
+  bool was_prefetched(champsim::address address, bool metadata);
+
   [[deprecated]] std::size_t get_occupancy(uint8_t queue_type, champsim::address address) const;
   [[deprecated]] std::size_t get_size(uint8_t queue_type, champsim::address address) const;
 

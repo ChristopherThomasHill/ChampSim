@@ -255,6 +255,23 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
   return true;
 }
 
+bool CACHE::in_cache(champsim::address addr, bool metadata)
+{
+  auto [set_begin, set_end] = get_set_span(addr);
+  auto way = std::find_if(set_begin, set_end, [matcher = matches_address(addr, metadata)](const auto& x) { return x.valid && matcher(x); });
+  return (way != set_end);
+}
+
+bool CACHE::was_prefetched(champsim::address addr, bool metadata)
+{
+  auto [set_begin, set_end] = get_set_span(addr);
+  auto way = std::find_if(set_begin, set_end, [matcher = matches_address(addr, metadata)](const auto& x) { return x.valid && matcher(x); });
+  if (way != set_end) {
+    return way->prefetch;
+  }
+  return false;
+}
+
 bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 {
   cpu = handle_pkt.cpu;
