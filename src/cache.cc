@@ -94,13 +94,14 @@ auto CACHE::operator=(CACHE&& other) -> CACHE&
 
 CACHE::tag_lookup_type::tag_lookup_type(const request_type& req, bool local_pref, bool skip)
     : address(req.address), v_address(req.v_address), metadata(req.metadata), data(req.data), ip(req.ip), instr_id(req.instr_id), pf_metadata(req.pf_metadata), cpu(req.cpu),
-      type(req.type), prefetch_from_this(local_pref), skip_fill(skip), is_translated(req.is_translated), instr_depend_on_me(req.instr_depend_on_me), metadata_request(req.metadata_request)
+      type(req.type), prefetch_from_this(local_pref), origin_prefetch_from_this(local_pref), skip_fill(skip), is_translated(req.is_translated), instr_depend_on_me(req.instr_depend_on_me), metadata_request(req.metadata_request)
 {
 }
 
 CACHE::mshr_type::mshr_type(const tag_lookup_type& req, champsim::chrono::clock::time_point _time_enqueued)
     : address(req.address), v_address(req.v_address), metadata(req.metadata), ip(req.ip), instr_id(req.instr_id), cpu(req.cpu), type(req.type),
-      prefetch_from_this(req.prefetch_from_this), time_enqueued(_time_enqueued), instr_depend_on_me(req.instr_depend_on_me), to_return(req.to_return), metadata_request(req.metadata_request)
+      prefetch_from_this(req.prefetch_from_this), origin_prefetch_from_this(req.origin_prefetch_from_this), time_enqueued(_time_enqueued), instr_depend_on_me(req.instr_depend_on_me), 
+      to_return(req.to_return), metadata_request(req.metadata_request)
 {
 }
 
@@ -122,6 +123,7 @@ CACHE::mshr_type CACHE::mshr_type::merge(mshr_type predecessor, mshr_type succes
   retval.instr_depend_on_me = merged_instr;
   retval.to_return = merged_return;
   retval.data_promise = predecessor.data_promise;
+  retval.origin_prefetch_from_this = predecessor.origin_prefetch_from_this;
 
   if constexpr (champsim::debug_print) {
     if (successor.type == access_type::PREFETCH) {
@@ -143,6 +145,7 @@ auto CACHE::fill_block(mshr_type mshr, uint32_t metadata, std::shared_ptr<champs
   CACHE::BLOCK to_fill;
   to_fill.valid = true;
   to_fill.prefetch = mshr.prefetch_from_this;
+  to_fill.origin_prefetch_from_this = mshr.origin_prefetch_from_this;
   to_fill.dirty = (mshr.type == access_type::WRITE);
   to_fill.address = mshr.address;
   to_fill.v_address = mshr.v_address;
@@ -290,7 +293,34 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 
   auto metadata_thru = handle_pkt.pf_metadata;
   if (should_activate_prefetcher(handle_pkt)) {
-    metadata_thru = impl_prefetcher_cache_operate(module_address(handle_pkt), handle_pkt.ip, hit, useful_prefetch, handle_pkt.type, metadata_thru);
+    bool is_late_prefetch = false;
+    bool origin_prefetch_from_this = false;
+
+    if (hit)
+    {
+      origin_prefetch_from_this = way->origin_prefetch_from_this;
+    }
+    else
+    {
+      // Miss already inflight
+      auto mshr_entry = std::find_if(std::begin(MSHR), std::end(MSHR), matches_address(handle_pkt.address, handle_pkt.metadata));
+
+      if (mshr_entry != MSHR.end())
+      {
+        if (mshr_entry->type == access_type::PREFETCH)
+          is_late_prefetch = true;
+        origin_prefetch_from_this = mshr_entry->origin_prefetch_from_this;
+      }
+
+      auto internal_pq = std::find_if(std::begin(internal_PQ), std::end(internal_PQ), matches_address(handle_pkt.address, handle_pkt.metadata));
+      if (internal_pq != internal_PQ.end())
+      {
+        is_late_prefetch = true;
+        origin_prefetch_from_this = internal_pq->origin_prefetch_from_this;
+      }
+    }
+    
+    metadata_thru = impl_prefetcher_cache_operate(module_address(handle_pkt), handle_pkt.ip, hit, useful_prefetch, handle_pkt.type, metadata_thru, is_late_prefetch, origin_prefetch_from_this);
   }
 
   // update replacement policy
@@ -855,9 +885,9 @@ std::vector<double> CACHE::get_pq_occupancy_ratio() const { return ::occupancy_r
 void CACHE::impl_prefetcher_initialize() const { pref_module_pimpl->impl_prefetcher_initialize(); }
 
 uint32_t CACHE::impl_prefetcher_cache_operate(champsim::address addr, champsim::address ip, bool cache_hit, bool useful_prefetch, access_type type,
-                                              uint32_t metadata_in) const
+                                              uint32_t metadata_in, bool late_prefetch, bool origin_prefetch_from_this) const
 {
-  return pref_module_pimpl->impl_prefetcher_cache_operate(addr, ip, cache_hit, useful_prefetch, type, metadata_in);
+  return pref_module_pimpl->impl_prefetcher_cache_operate(addr, ip, cache_hit, useful_prefetch, type, metadata_in, late_prefetch, origin_prefetch_from_this);
 }
 
 uint32_t CACHE::impl_prefetcher_cache_fill(champsim::address addr, long set, long way, bool prefetch, champsim::address evicted_addr,

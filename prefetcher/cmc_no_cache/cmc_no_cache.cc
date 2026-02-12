@@ -65,24 +65,15 @@ cmc_no_cache::StorageEntry* cmc_no_cache::find_entry(uint64_t search_addr)
 
 cmc_no_cache::StorageEntry* cmc_no_cache::access_entry(uint64_t addr)
 {
-  uint32_t set_idx = metadata_set(addr);
-  auto& set = storage[set_idx];
+  StorageEntry* entry = find_entry(addr);
 
-  for (auto& entry : set) {
-    if (entry.valid && entry.addr == addr) {
-      uint8_t current_rank = entry.lru_info;
-      entry.lru_info = 0;
-      for (auto& other : set) {
-        if (other.lru_info < current_rank && &other != &entry) {
-            other.lru_info++;
-        }
-      }
-
-      return &entry;
-    }
+  if (entry != nullptr)
+  {
+    if (entry->brrip_info > 0)
+      entry->brrip_info -= 1;
   }
 
-  return nullptr;
+  return entry;
 }
 
 cmc_no_cache::StorageEntry* cmc_no_cache::find_victim(uint64_t addr)
@@ -90,27 +81,23 @@ cmc_no_cache::StorageEntry* cmc_no_cache::find_victim(uint64_t addr)
   uint32_t set_idx = metadata_set(addr);
   auto& set = storage[set_idx];
 
-  for (auto& entry : set) {
-    if (!entry.valid) {
-      entry.valid = true;
-      entry.addr = addr;
+  for (auto& entry : set)
+  {
+    if (!entry.valid)
       return &entry; 
-    }
   }
 
-  StorageEntry* victim = nullptr;
-  int max_lru = -1;
-
-  for (auto& entry : set) {
-    if (entry.lru_info > max_lru) {
-      max_lru = entry.lru_info;
-      victim = &entry;
+  while (true) {
+    for (auto& entry : set) {
+      if (entry.brrip_info >= 3)
+        return &entry;
     }
+
+    for (auto& entry : set)
+      entry.brrip_info += 1;
   }
 
-  victim->valid = true;
-  victim->addr = addr;
-  return victim;
+  return nullptr;
 }
 
 void cmc_no_cache::prefetcher_initialize()
@@ -122,15 +109,14 @@ void cmc_no_cache::prefetcher_initialize()
   storage = std::vector<std::vector<StorageEntry>>(metadata_sets, std::vector<StorageEntry>(metadata_ways));
 }
 
-uint32_t cmc_no_cache::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint8_t cache_hit, bool useful_prefetch, access_type type, uint32_t metadata_in)
+uint32_t cmc_no_cache::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint8_t cache_hit, bool useful_prefetch, access_type type, uint32_t metadata_in, bool late_prefetch, bool prefetch_from_this)
 {
   // Make sure it's a load
   champsim::block_number block_addr(addr);
-  if((type != access_type::LOAD && type != access_type::RFO) || block_addr == champsim::block_number(0)) {
+  if( type != access_type::LOAD || block_addr == champsim::block_number(0) )
     return metadata_in;
-  }
 
-  bool covered = cache_hit;
+  bool covered = (cache_hit || late_prefetch) && !prefetch_from_this;
 
   // Attempt Prediction
   uint64_t current_addr = metadata_addr(ip, block_addr);
@@ -171,6 +157,10 @@ uint32_t cmc_no_cache::prefetcher_cache_operate(champsim::address addr, champsim
       else 
       {
         entry = find_victim(trigger_addr);
+        entry->valid = true;
+        entry->addr = trigger_addr;
+        entry->brrip_info = 3;
+
         access_entry(trigger_addr);
         entry->addresses = recorder->entries;
       }

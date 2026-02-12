@@ -28,6 +28,7 @@ namespace champsim
 struct cache_block {
   bool valid = false;
   bool prefetch = false;
+  bool origin_prefetch_from_this = false;
   bool dirty = false;
   bool metadata = false;
 

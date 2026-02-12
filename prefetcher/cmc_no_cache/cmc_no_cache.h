@@ -53,7 +53,7 @@ class cmc_no_cache : public champsim::modules::prefetcher
   struct StorageEntry {
     bool valid = false;
     uint64_t addr;
-    uint8_t lru_info;
+    uint8_t brrip_info;
     std::vector<champsim::block_number> addresses;
   };
   std::vector<std::vector<StorageEntry>> storage;
@@ -69,7 +69,7 @@ public:
   std::map<champsim::address, champsim::block_number> training_unit;
 
   void prefetcher_initialize();
-  uint32_t prefetcher_cache_operate(champsim::address, champsim::address, uint8_t, bool, access_type, uint32_t metadata_in);
+  uint32_t prefetcher_cache_operate(champsim::address, champsim::address, uint8_t, bool, access_type, uint32_t metadata_in, bool late_prefetch, bool prefetch_from_this);
 };
 
 #endif
