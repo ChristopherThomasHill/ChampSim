@@ -1,5 +1,5 @@
-#ifndef PREFETCHER_CMC_H
-#define PREFETCHER_CMC_H
+#ifndef PREFETCHER_CMC_MODIFIED_H
+#define PREFETCHER_CMC_MODIFIED_H
 
 #include <cstdint>
 #include <deque>
@@ -9,7 +9,7 @@
 #include "metadata.h"
 #include "modules.h"
 
-class cmc : public champsim::modules::prefetcher
+class cmc_modified : public champsim::modules::prefetcher
 {
   using channel_type = champsim::channel;
   using request_type = typename channel_type::request_type;

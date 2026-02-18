@@ -10,6 +10,7 @@ lru::lru(CACHE* cache, long sets, long ways) : replacement(cache), NUM_WAY(ways)
 long lru::find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const champsim::cache_block* current_set, champsim::address ip,
                       champsim::address full_addr, access_type type)
 {
+  /*
   auto begin = std::next(std::begin(last_used_cycles), set * NUM_WAY);
   auto end = std::next(begin, NUM_WAY);
 
@@ -18,6 +19,19 @@ long lru::find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, cons
   assert(begin <= victim);
   assert(victim < end);
   return std::distance(begin, victim);
+  */
+
+  uint64_t begin = set * NUM_WAY, end = begin + NUM_WAY;
+  uint64_t evict_way = NUM_WAY;
+  uint64_t min_cycles = cycle + 10;
+  for(uint64_t way = begin; way < end; way++) {
+      if(!intern_->block[way].metadata && last_used_cycles[way] < min_cycles) {
+          min_cycles = last_used_cycles[way];
+          evict_way = way - begin;
+      }
+  }
+  assert(evict_way < NUM_WAY);
+  return evict_way;
 }
 
 void lru::replacement_cache_fill(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip, champsim::address victim_addr,

@@ -38,6 +38,7 @@ class reuse_info : public champsim::modules::replacement
     std::unordered_map<uint64_t, uint64_t> metadata_store_reuse;
 
     uint64_t no_reuse = 0;
+    uint64_t meta_load_after = 0;
   };
 
   uint64_t MAX_REUSE = 512;

@@ -10,25 +10,30 @@ reuse_info::reuse_info(CACHE* cache, long sets, long ways) : replacement(cache),
 
 void reuse_info::track_info(long set, champsim::block_number block_addr, champsim::address ip, access_type type)
 {
-  if (type == access_type::WRITE) // Ignore Writes
+  if (type == access_type::WRITE || type == access_type::TRANSLATION) // Ignore Writes
     return;
 
   uint64_t addr = block_addr.to<uint64_t>();
 
   if (tracker.count(addr)) {
-    uint64_t reuse_distance = set_age[set] - std::get<0>(tracker[addr]);
-    
-    if (reuse_distance >= MAX_REUSE) {
-      reuse_table[std::get<2>(tracker[addr])].no_reuse += 1;
-    } else {
-      if (type == access_type::PREFETCH)
-        reuse_table[std::get<2>(tracker[addr])].prefetch_reuse[reuse_distance] += 1;
-      else if (type == access_type::METADATA_LOAD)
-        reuse_table[std::get<2>(tracker[addr])].metadata_load_reuse[reuse_distance] += 1;
-      else if (type == access_type::METADATA_STORE)
-        reuse_table[std::get<2>(tracker[addr])].metadata_store_reuse[reuse_distance] += 1;
-      else
-        reuse_table[std::get<2>(tracker[addr])].demand_reuse[reuse_distance] += 1;
+    if (type == access_type::METADATA_STORE) {
+      reuse_table[std::get<2>(tracker[addr])].meta_load_after += 1;
+    }
+    else {
+      uint64_t reuse_distance = set_age[set] - std::get<0>(tracker[addr]);
+      
+      if (reuse_distance >= MAX_REUSE) {
+        reuse_table[std::get<2>(tracker[addr])].no_reuse += 1;
+      } else {
+        if (type == access_type::PREFETCH)
+          reuse_table[std::get<2>(tracker[addr])].prefetch_reuse[reuse_distance] += 1;
+        else if (type == access_type::METADATA_LOAD)
+          reuse_table[std::get<2>(tracker[addr])].metadata_load_reuse[reuse_distance] += 1;
+        else if (type == access_type::METADATA_STORE)
+          reuse_table[std::get<2>(tracker[addr])].metadata_store_reuse[reuse_distance] += 1;
+        else
+          reuse_table[std::get<2>(tracker[addr])].demand_reuse[reuse_distance] += 1;
+      }
     }
   }
 
@@ -121,7 +126,7 @@ void reuse_info::replacement_final_stats()
   // ---------------------------------------------------------
   // 4. Print Dynamic Header
   // ---------------------------------------------------------
-  std::cout << "PC,AccessType,TotalSigSeen,NoReuse";
+  std::cout << "PC,AccessType,TotalSigSeen,NoReuse,MetaLoadAfter";
 
   // We define the types in an array to loop over them for the header
   std::string types[] = {"Prefetch", "Demand", "MetaLoad", "MetaStore"};
@@ -147,7 +152,8 @@ void reuse_info::replacement_final_stats()
       std::cout << "0x" << std::hex << sig.pc.to<uint64_t>() << std::dec << "," 
                 << access_type_names[static_cast<int>(sig.type)] << ","
                 << item.total_count << ","
-                << reuse_table[sig].no_reuse;
+                << reuse_table[sig].no_reuse << ","
+                << reuse_table[sig].meta_load_after;
 
       // Helper to sum a specific map for a specific bin index
       auto get_bin_sum = [&](const std::unordered_map<uint64_t, uint64_t>& m, uint64_t bin_idx) {

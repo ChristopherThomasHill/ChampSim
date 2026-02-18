@@ -1,16 +1,17 @@
 #include <cmath>
+#include <iostream>
 
 #include "champsim.h"
-#include "mockingjay.h"
+#include "mockingjay_brrip.h"
 
-bool mockingjay::is_sampled_set(long set)
+bool mockingjay_brrip::is_sampled_set(long set)
 {
   long mask_length = LOG2_LLC_SET - LOG2_SAMPLED_SETS;
   long mask = (1 << mask_length) - 1;
   return (set & mask) == ((set >> (LOG2_LLC_SET - mask_length)) & mask);
 }
 
-uint64_t mockingjay::CRC_HASH(uint64_t _blockAddress)
+uint64_t mockingjay_brrip::CRC_HASH(uint64_t _blockAddress)
 {
   static const unsigned long long crcPolynomial = 3988292384ULL;
   unsigned long long _returnVal = _blockAddress;
@@ -19,7 +20,7 @@ uint64_t mockingjay::CRC_HASH(uint64_t _blockAddress)
   return _returnVal;
 }
 
-uint64_t mockingjay::build_signature(champsim::address ip, uint8_t hit, bool prefetch, uint32_t core)
+uint64_t mockingjay_brrip::build_signature(champsim::address ip, uint8_t hit, bool prefetch, uint32_t core)
 {
   uint64_t signature;
   if (NUM_CPUS == 1) {
@@ -44,21 +45,21 @@ uint64_t mockingjay::build_signature(champsim::address ip, uint8_t hit, bool pre
   return signature;
 }
 
-uint64_t mockingjay::get_sampled_cache_index(uint64_t full_addr)
+uint64_t mockingjay_brrip::get_sampled_cache_index(uint64_t full_addr)
 {
   full_addr = full_addr >> LOG2_BLOCK_SIZE;
   full_addr = (full_addr << (64 - (LOG2_SAMPLED_CACHE_SETS + LOG2_LLC_SET))) >> (64 - (LOG2_SAMPLED_CACHE_SETS + LOG2_LLC_SET));
   return full_addr;
 }
 
-uint64_t mockingjay::get_sampled_cache_tag(uint64_t x)
+uint64_t mockingjay_brrip::get_sampled_cache_tag(uint64_t x)
 {
   x >>= LOG2_LLC_SET + LOG2_BLOCK_SIZE + LOG2_SAMPLED_CACHE_SETS;
   x = (x << (64 - SAMPLED_CACHE_TAG_BITS)) >> (64 - SAMPLED_CACHE_TAG_BITS);
   return x;
 }
 
-int mockingjay::search_sampled_cache(uint64_t blockAddress, uint32_t set)
+int mockingjay_brrip::search_sampled_cache(uint64_t blockAddress, uint32_t set)
 {
   SampledCacheLine* sampled_set = sampled_cache[set];
   for (int way = 0; way < SAMPLED_CACHE_WAYS; way++) {
@@ -69,7 +70,7 @@ int mockingjay::search_sampled_cache(uint64_t blockAddress, uint32_t set)
   return -1;
 }
 
-void mockingjay::detrain(uint32_t set, int way)
+void mockingjay_brrip::detrain(uint32_t set, int way)
 {
   SampledCacheLine temp = sampled_cache[set][way];
   if (!temp.valid) {
@@ -84,7 +85,7 @@ void mockingjay::detrain(uint32_t set, int way)
   sampled_cache[set][way].valid = false;
 }
 
-int mockingjay::temporal_difference(int init, int sample)
+int mockingjay_brrip::temporal_difference(int init, int sample)
 {
   if (sample > init) {
     int diff = sample - init;
@@ -101,14 +102,14 @@ int mockingjay::temporal_difference(int init, int sample)
   }
 }
 
-int mockingjay::increment_timestamp(int input)
+int mockingjay_brrip::increment_timestamp(int input)
 {
   input++;
   input = input % (1 << TIMESTAMP_BITS);
   return input;
 }
 
-int mockingjay::time_elapsed(int global, int local)
+int mockingjay_brrip::time_elapsed(int global, int local)
 {
    if (global >= local) {
       return global - local;
@@ -117,19 +118,20 @@ int mockingjay::time_elapsed(int global, int local)
     return global - local;
 }
 
-mockingjay::mockingjay(CACHE* cache) : mockingjay(cache, cache->NUM_SET, cache->NUM_WAY) {}
+mockingjay_brrip::mockingjay_brrip(CACHE* cache) : mockingjay_brrip(cache, cache->NUM_SET, cache->NUM_WAY) {}
 
-mockingjay::mockingjay(CACHE* cache, long sets, long ways) 
+mockingjay_brrip::mockingjay_brrip(CACHE* cache, long sets, long ways) 
                     : replacement(cache),
                       NUM_SET(sets),
                       NUM_WAY(ways),
+                      DATA_WAYS(ways / 2),
                       LOG2_LLC_SET(std::log2(NUM_SET)),
-                      LOG2_LLC_SIZE(LOG2_LLC_SET + std::log2(NUM_WAY) + LOG2_BLOCK_SIZE),
+                      LOG2_LLC_SIZE(LOG2_LLC_SET + std::log2(DATA_WAYS) + LOG2_BLOCK_SIZE),
                       LOG2_SAMPLED_SETS(LOG2_LLC_SIZE - 16),
                       HISTORY(8),
                       GRANULARITY(8),
-                      INF_RD(NUM_WAY * HISTORY - 1),
-                      INF_ETR((NUM_WAY * HISTORY / GRANULARITY) - 1),
+                      INF_RD(DATA_WAYS * HISTORY - 1),
+                      INF_ETR((DATA_WAYS * HISTORY / GRANULARITY) - 1),
                       MAX_RD(INF_RD - 22),
                       SAMPLED_CACHE_WAYS(5),
                       LOG2_SAMPLED_CACHE_SETS(4),
@@ -152,12 +154,38 @@ mockingjay::mockingjay(CACHE* cache, long sets, long ways)
         sampled_cache[set + modifier*i] = new SampledCacheLine[SAMPLED_CACHE_WAYS]();
     }
   }
+
+  rrip = std::vector<std::vector<int>>(NUM_SET, std::vector<int>(NUM_WAY));
 }
 
-long mockingjay::find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const champsim::cache_block* current_set, champsim::address ip, champsim::address full_addr, access_type type)
+long mockingjay_brrip::find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const champsim::cache_block* current_set, champsim::address ip, champsim::address full_addr, access_type type)
 {
-  for (uint32_t way = 0; way < NUM_WAY; way++) {
+  if (type == access_type::METADATA_LOAD || type == access_type::METADATA_STORE)
+  {
+    if (type == access_type::METADATA_LOAD)
+        return NUM_WAY; // Bypass Loads
+
+    for (uint32_t way = DATA_WAYS; way < NUM_WAY; way++) {
+        if (current_set[way].valid == false) {
+            return way;
+        }
+    }
+
+    while (true) {
+        for (uint32_t way = DATA_WAYS; way < NUM_WAY; way++) {
+            if (rrip[set][way] >= 3)
+                return way;
+        }
+
+        for (uint32_t way = DATA_WAYS; way < NUM_WAY; way++) {
+            rrip[set][way] +=1;
+        }
+    }
+  }
+
+  for (uint32_t way = 0; way < DATA_WAYS; way++) {
     if (current_set[way].valid == false) {
+      assert(way < DATA_WAYS);
       return way;
     }
   }
@@ -165,7 +193,7 @@ long mockingjay::find_victim(uint32_t triggering_cpu, uint64_t instr_id, long se
   // your eviction policy goes here
   int max_etr = 0;
   int victim_way = 0;
-  for (uint32_t way = 0; way < NUM_WAY; way++) {
+  for (uint32_t way = 0; way < DATA_WAYS; way++) {
     if (intern_->block[way].metadata) continue;
 
     if (abs(etr[set][way]) > max_etr ||
@@ -182,11 +210,32 @@ long mockingjay::find_victim(uint32_t triggering_cpu, uint64_t instr_id, long se
       return NUM_WAY;
   }
   
+  assert(victim_way < DATA_WAYS);
   return victim_way;
 }
 
-void mockingjay::update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip, champsim::address victim_addr, access_type type, uint8_t hit)
+void mockingjay_brrip::update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip, champsim::address victim_addr, access_type type, uint8_t hit)
 {
+  if (type == access_type::METADATA_LOAD || type == access_type::METADATA_STORE)
+  {
+    if (way < NUM_WAY)
+    {
+        if (!hit)
+            rrip[set][way] = 2;
+        else
+        {
+            if (type == access_type::METADATA_LOAD)
+            {
+                if (rrip[set][way] > 0)
+                    rrip[set][way] -= 1;
+            }
+        }
+    }
+    return;
+  }
+
+  assert(way == NUM_WAY || way < DATA_WAYS);
+
   if (type == access_type::WRITE)
   {
     if(!hit) etr[set][way] = -1 * INF_ETR;
@@ -258,7 +307,7 @@ void mockingjay::update_replacement_state(uint32_t triggering_cpu, long set, lon
   }
 
   if(etr_clock[set] == GRANULARITY) {
-      for (uint32_t w = 0; w < NUM_WAY; w++) {
+      for (uint32_t w = 0; w < DATA_WAYS; w++) {
           if ((uint32_t) w != way && abs(etr[set][w]) < INF_ETR) {
               etr[set][w]--;
           }

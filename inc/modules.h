@@ -102,6 +102,7 @@ struct btb : public bound_to<O3_CPU> {
 struct prefetcher : public bound_to<CACHE> {
   explicit prefetcher(CACHE* cache) : bound_to<CACHE>(cache) {}
   bool prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata) const;
+  bool prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata, champsim::address ip) const;
   [[deprecated]] bool prefetch_line(uint64_t pf_addr, bool fill_this_level, uint32_t prefetch_metadata) const;
 
   template <typename T, typename... Args>
@@ -198,6 +199,11 @@ struct replacement : public bound_to<CACHE> {
   static auto final_stats_member_impl(long) -> std::false_type;
 
   template <typename T, typename... Args>
+  static auto update_prefetcher_stats_impl(int) -> decltype(std::declval<T>().replacement_update_prefetcher_stats(std::declval<Args>()...), std::true_type{});
+  template <typename, typename...>
+  static auto update_prefetcher_stats_impl(long) -> std::false_type;
+
+  template <typename T, typename... Args>
   constexpr static bool has_initialize = decltype(initialize_member_impl<T, Args...>(0))::value;
 
   template <typename T, typename... Args>
@@ -211,6 +217,9 @@ struct replacement : public bound_to<CACHE> {
 
   template <typename T, typename... Args>
   constexpr static bool has_final_stats = decltype(final_stats_member_impl<T, Args...>(0))::value;
+
+  template <typename T, typename... Args>
+  constexpr static bool has_update_prefetcher_stats = decltype(update_prefetcher_stats_impl<T, Args...>(0))::value;
 };
 } // namespace champsim::modules
 

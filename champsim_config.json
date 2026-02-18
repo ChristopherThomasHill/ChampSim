@@ -1,5 +1,5 @@
 {
-    "executable_name": "lru_cmc_no_cache_1_core",
+    "executable_name": "mockingjay_brrip_cmc_1_core",
     "block_size": 64,
     "page_size": 4096,
     "heartbeat_frequency": 10000000,
@@ -64,7 +64,7 @@
         "prefetch_as_load": false,
         "virtual_prefetch": false,
         "prefetch_activate": "LOAD,PREFETCH",
-        "prefetcher": "no"
+        "prefetcher": "ip_stride"
     },
     "L2C": {
         "sets": 1024,
@@ -134,7 +134,7 @@
     "LLC": {
         "frequency": 4000,
         "sets": 2048,
-        "ways": 16,
+        "ways": 32,
         "rq_size": 32,
         "wq_size": 32,
         "pq_size": 32,
@@ -145,8 +145,8 @@
         "prefetch_as_load": false,
         "virtual_prefetch": false,
         "prefetch_activate": "LOAD,PREFETCH",
-        "prefetcher": "cmc_no_cache",
-        "replacement": "lru"
+        "prefetcher": "cmc",
+        "replacement": "mockingjay_brrip"
     },
     "physical_memory": {
         "data_rate": 3200,

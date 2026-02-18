@@ -1,12 +1,12 @@
-#ifndef REPLACEMENT_CMC_MOCKINGJAY_H
-#define REPLACEMENT_CMC_MOCKINGJAY_H
+#ifndef REPLACEMENT_STREAMLINE_H
+#define REPLACEMENT_STREAMLINE_H
 
 #include <unordered_map>
 
 #include "cache.h"
 #include "modules.h"
 
-class cmc_mockingjay : public champsim::modules::replacement {
+class streamline : public champsim::modules::replacement {
   const long NUM_SET;
   const long NUM_WAY;
   
@@ -29,6 +29,9 @@ class cmc_mockingjay : public champsim::modules::replacement {
 
   const double TEMP_DIFFERENCE;
   const double FLEXMIN_PENALTY;
+
+  const uint32_t PREFETCH_ACCURACY_EPOCH_LENGTH;
+  const uint32_t METADATA_PARTITION_EPOCH_LENGTH;
   
   std::vector<std::vector<int>> etr;
   std::vector<int> etr_clock;
@@ -39,31 +42,55 @@ class cmc_mockingjay : public champsim::modules::replacement {
 
   struct SampledCacheLine
   {
-    bool valid;
+    bool valid = false;
+    bool metadata;
     uint64_t tag;
     uint64_t signature;
     int timestamp;
   };
   std::unordered_map<uint64_t, SampledCacheLine* > sampled_cache;
 
+  struct SetDuelingCacheLine
+  {
+    bool valid = false;
+    champsim::block_number block_num;
+    int etr;
+  };
+  std::unordered_map<uint64_t, SetDuelingCacheLine* > half_metadata_cache;
+  std::unordered_map<uint64_t, SetDuelingCacheLine* > quarter_metadata_cache;
+  std::unordered_map<uint64_t, SetDuelingCacheLine* > no_metadata_cache;
+
+  uint32_t metadata_ways;
+
+  uint32_t metadata_partition_epoch;
+  uint32_t half_metadata_set_duel_counter;
+  uint32_t quarter_metadata_set_duel_counter;
+  uint32_t no_metadata_set_duel_counter;
+
+  uint32_t prefetch_accuracy_epoch;
+  uint32_t prefetch_useful_count;
+  uint16_t prefetch_set_duel_increment;
+
   bool is_sampled_set(long set);
   uint64_t CRC_HASH(uint64_t _blockAddress);
-  uint64_t build_signature(champsim::address ip, uint8_t hit, bool prefetch, uint32_t core);
+  uint64_t build_signature(uint32_t triggering_cpu, champsim::address ip, access_type type, uint8_t hit);
   uint64_t get_sampled_cache_index(uint64_t full_addr);
-  uint64_t get_sampled_cache_tag(uint64_t x);
+  uint64_t get_sampled_cache_tag(uint64_t full_addr);
   int search_sampled_cache(uint64_t blockAddress, uint32_t set);
   void detrain(uint32_t set, int way);
   int temporal_difference(int init, int sample);
   int increment_timestamp(int input);
   int time_elapsed(int global, int local);
+  void update_set_dueling(uint32_t triggering_cpu, long set, champsim::address full_addr, champsim::address ip, access_type type);
 
 public:
 
-  explicit cmc_mockingjay(CACHE* cache);
-  cmc_mockingjay(CACHE* cache, long sets, long ways);
+  explicit streamline(CACHE* cache);
+  streamline(CACHE* cache, long sets, long ways);
 
   long find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const champsim::cache_block* current_set, champsim::address ip, champsim::address full_addr, access_type type);
   void update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip, champsim::address victim_addr, access_type type, uint8_t hit);
+  void replacement_update_prefetcher_stats(bool useful);
 };
 
 #endif

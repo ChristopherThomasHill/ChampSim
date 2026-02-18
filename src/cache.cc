@@ -177,11 +177,8 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
 
   // find victim
   auto [set_begin, set_end] = get_set_span(fill_mshr.address);
-  auto way = std::find_if_not(set_begin, set_end, [](auto x) { return x.valid; });
-  if (way == set_end) {
-    way = std::next(set_begin, impl_find_victim(fill_mshr.cpu, fill_mshr.instr_id, get_set_index(fill_mshr.address), &*set_begin, fill_mshr.ip,
+  auto way = std::next(set_begin, impl_find_victim(fill_mshr.cpu, fill_mshr.instr_id, get_set_index(fill_mshr.address), &*set_begin, fill_mshr.ip,
                                                 fill_mshr.address, fill_mshr.type));
-  }
   assert(set_begin <= way);
   assert(way <= set_end);
   assert(way != set_end || fill_mshr.type != access_type::WRITE); // Writes may not bypass
@@ -230,6 +227,7 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
 
   if (way != set_end) {
     if (way->valid && way->prefetch) {
+      impl_replacement_update_prefetcher_stats(false);
       ++sim_stats.pf_useless;
     }
 
@@ -344,6 +342,7 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 
     // update prefetch stats and reset prefetch bit
     if (useful_prefetch) {
+      impl_replacement_update_prefetcher_stats(true);
       ++sim_stats.pf_useful;
       way->prefetch = false;
     }
@@ -428,6 +427,7 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
     if (mshr_entry->type == access_type::PREFETCH && handle_pkt.type != access_type::PREFETCH) {
       // Mark the prefetch as useful
       if (mshr_entry->prefetch_from_this) {
+        impl_replacement_update_prefetcher_stats(true);
         ++sim_stats.pf_useful;
       }
     }
@@ -663,6 +663,11 @@ long CACHE::invalidate_entry(champsim::address inval_addr, bool is_metadata)
 
 bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata)
 {
+  return prefetch_line(pf_addr, fill_this_level, prefetch_metadata, champsim::address(0));
+}
+
+bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata, champsim::address ip)
+{
   ++sim_stats.pf_requested;
 
   if (std::size(internal_PQ) >= PQ_SIZE) {
@@ -676,6 +681,7 @@ bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint3
   pf_packet.address = pf_addr;
   pf_packet.v_address = virtual_prefetch ? pf_addr : champsim::address{};
   pf_packet.metadata = false;
+  pf_packet.ip = ip;
   pf_packet.is_translated = !virtual_prefetch;
 
   internal_PQ.emplace_back(pf_packet, true, !fill_this_level);
@@ -936,6 +942,8 @@ void CACHE::impl_replacement_cache_fill(uint32_t triggering_cpu, long set, long 
 }
 
 void CACHE::impl_replacement_final_stats() const { repl_module_pimpl->impl_replacement_final_stats(); }
+
+void CACHE::impl_replacement_update_prefetcher_stats(bool useful) const { repl_module_pimpl->impl_replacement_update_prefetcher_stats(useful); }
 
 void CACHE::initialize()
 {

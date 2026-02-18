@@ -123,7 +123,6 @@ cmc_mockingjay::cmc_mockingjay(CACHE* cache, long sets, long ways)
                     : replacement(cache),
                       NUM_SET(sets),
                       NUM_WAY(ways),
-                      NUM_METADATA_WAY(ways / 2),
                       LOG2_LLC_SET(std::log2(NUM_SET)),
                       LOG2_LLC_SIZE(LOG2_LLC_SET + std::log2(NUM_WAY) + LOG2_BLOCK_SIZE),
                       LOG2_SAMPLED_SETS(LOG2_LLC_SIZE - 16),
@@ -157,10 +156,7 @@ cmc_mockingjay::cmc_mockingjay(CACHE* cache, long sets, long ways)
 
 long cmc_mockingjay::find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const champsim::cache_block* current_set, champsim::address ip, champsim::address full_addr, access_type type)
 {
-  uint32_t base_way = (type == access_type::METADATA_LOAD || type == access_type::METADATA_STORE) ? 0 : NUM_METADATA_WAY;
-  uint32_t max_way = (type == access_type::METADATA_LOAD || type == access_type::METADATA_STORE) ? NUM_METADATA_WAY : NUM_WAY;
-
-  for (uint32_t way = base_way; way < max_way; way++) {
+  for (uint32_t way = 0; way < NUM_WAY; way++) {
     if (current_set[way].valid == false) {
       return way;
     }
@@ -169,7 +165,7 @@ long cmc_mockingjay::find_victim(uint32_t triggering_cpu, uint64_t instr_id, lon
   // your eviction policy goes here
   int max_etr = 0;
   int victim_way = 0;
-  for (uint32_t way = base_way; way < max_way; way++) {
+  for (uint32_t way = 0; way < NUM_WAY; way++) {
     if (abs(etr[set][way]) > max_etr ||
           (abs(etr[set][way]) == max_etr &&
             etr[set][way] < 0)) { //TECHNICALLY this logic is not correct. While this does prioritize negative values, it does prioritize negative values over other negative values.
@@ -178,9 +174,9 @@ long cmc_mockingjay::find_victim(uint32_t triggering_cpu, uint64_t instr_id, lon
     }
   }
   
-  uint64_t pc_signature = build_signature(ip, false, type == access_type::PREFETCH, triggering_cpu);
-  if (type != access_type::WRITE && rdp.count(pc_signature) &&
-          (rdp[pc_signature] > MAX_RD || rdp[pc_signature] / GRANULARITY > max_etr)) {
+  uint64_t signature = build_signature(ip, false, type == access_type::PREFETCH, triggering_cpu);
+  if (type != access_type::WRITE && rdp.count(signature) &&
+          (rdp[signature] > MAX_RD || rdp[signature] / GRANULARITY > max_etr)) {
       return NUM_WAY;
   }
   

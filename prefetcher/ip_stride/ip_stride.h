@@ -29,6 +29,7 @@ struct ip_stride : public champsim::modules::prefetcher {
 
   struct lookahead_entry {
     champsim::address address{};
+    champsim::address ip{};
     champsim::address::difference_type stride{};
     int degree = 0; // degree remaining
   };

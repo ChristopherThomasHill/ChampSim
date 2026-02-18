@@ -1,10 +1,10 @@
 #include "cache.h"
 
-#include "cmc.h"
+#include "cmc_modified.h"
 
 #include <iostream>
 
-bool cmc::Recorder::train_entry(champsim::block_number block_addr)
+bool cmc_modified::Recorder::train_entry(champsim::block_number block_addr)
 {
   if (index == 0)
   {
@@ -32,18 +32,18 @@ bool cmc::Recorder::train_entry(champsim::block_number block_addr)
   }
 }
 
-void cmc::Recorder::reset()
+void cmc_modified::Recorder::reset()
 {
     index = 0;
     entries.clear();
 }
 
-champsim::address cmc::metadata_addr(champsim::address ip, champsim::block_number block_addr)
+champsim::address cmc_modified::metadata_addr(champsim::address ip, champsim::block_number block_addr)
 {
-  return champsim::address((ip.to<uint64_t>() << 6) ^ (block_addr.to<uint64_t>() << 6));
+  return champsim::address(/*(ip.to<uint64_t>() << 6) ^*/ (block_addr.to<uint64_t>() << 6));
 }
 
-void cmc::send_metadata_load(champsim::address ip, champsim::block_number block_addr, bool covered)
+void cmc_modified::send_metadata_load(champsim::address ip, champsim::block_number block_addr, bool covered)
 {
   request_type packet;
 
@@ -59,7 +59,7 @@ void cmc::send_metadata_load(champsim::address ip, champsim::block_number block_
   this->cache_channel.add_rq(packet);
 }
 
-void cmc::send_metadata_store(champsim::address ip, champsim::block_number block_addr, std::vector<champsim::block_number> entries)
+void cmc_modified::send_metadata_store(champsim::address ip, champsim::block_number block_addr, std::vector<champsim::block_number> entries)
 {
   request_type packet;
 
@@ -75,14 +75,14 @@ void cmc::send_metadata_store(champsim::address ip, champsim::block_number block
   this->cache_channel.add_wq(packet);
 }
 
-void cmc::prefetcher_initialize()
+void cmc_modified::prefetcher_initialize()
 {
   cache = this->intern_;
   this->cache->upper_levels.push_back(&this->cache_channel);
   recorder = new Recorder(degree);
 }
 
-uint32_t cmc::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint8_t cache_hit, bool useful_prefetch, access_type type, uint32_t metadata_in, bool late_prefetch, bool prefetch_from_this)
+uint32_t cmc_modified::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint8_t cache_hit, bool useful_prefetch, access_type type, uint32_t metadata_in, bool late_prefetch, bool prefetch_from_this)
 {
   // Don't prefetch metadata
   if (type == access_type::METADATA_LOAD || type == access_type::METADATA_STORE)
@@ -101,7 +101,7 @@ uint32_t cmc::prefetcher_cache_operate(champsim::address addr, champsim::address
   return metadata_in;
 }
 
-void cmc::prefetcher_cycle_operate()
+void cmc_modified::prefetcher_cycle_operate()
 {
   // Clear Channel If Response Exists
   while (!this->cache_channel.returned.empty()) {
@@ -110,7 +110,7 @@ void cmc::prefetcher_cycle_operate()
   }
 }
 
-void cmc::prefetcher_metadata_request_fill(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk)
+void cmc_modified::prefetcher_metadata_request_fill(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk)
 {
   CMCRequest& cmc_request = *static_cast<CMCRequest*>(request.get());
 
@@ -120,7 +120,7 @@ void cmc::prefetcher_metadata_request_fill(const std::shared_ptr<champsim::Metad
   blk = std::make_shared<CMCBlock>(cmc_request.entries);
 }
 
-void cmc::prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk> blk, bool hit)
+void cmc_modified::prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk> blk, bool hit)
 {
   CMCRequest& cmc_request = *static_cast<CMCRequest*>(request.get());
 
@@ -131,7 +131,7 @@ void cmc::prefetcher_metadata_request_update(const std::shared_ptr<champsim::Met
       if (cmc_request.covered)
       {
         // printf("Invalidate %lx\n", metadata_addr(cmc_request.pc, cmc_request.block_addr).to<uint64_t>());
-        cache->invalidate_entry(metadata_addr(cmc_request.pc, cmc_request.block_addr), true /*metadata*/);
+        // cache->invalidate_entry(metadata_addr(cmc_request.pc, cmc_request.block_addr), true /*metadata*/);
       }
       else
       {

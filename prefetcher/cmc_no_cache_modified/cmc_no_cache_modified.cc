@@ -1,12 +1,12 @@
 #include "cache.h"
 
-#include "cmc_no_cache.h"
+#include "cmc_no_cache_modified.h"
 
 #include <iostream>
 
 #define MAX_DEGREE 4
 
-bool cmc_no_cache::Recorder::train_entry(champsim::block_number block_addr)
+bool cmc_no_cache_modified::Recorder::train_entry(champsim::block_number block_addr)
 {
   if (index == 0)
   {
@@ -34,23 +34,23 @@ bool cmc_no_cache::Recorder::train_entry(champsim::block_number block_addr)
   }
 }
 
-void cmc_no_cache::Recorder::reset()
+void cmc_no_cache_modified::Recorder::reset()
 {
     index = 0;
     entries.clear();
 }
 
-uint64_t cmc_no_cache::metadata_addr(champsim::address ip, champsim::block_number block_addr)
+uint64_t cmc_no_cache_modified::metadata_addr(champsim::address ip, champsim::block_number block_addr)
 {
-  return (ip.to<uint64_t>() << 6) ^ (block_addr.to<uint64_t>() << 6);
+  return block_addr.to<uint64_t>();
 }
 
-uint32_t cmc_no_cache::metadata_set(uint64_t metadata_addr)
+uint32_t cmc_no_cache_modified::metadata_set(uint64_t metadata_addr)
 {
   return metadata_addr & (metadata_sets - 1);
 }
 
-cmc_no_cache::StorageEntry* cmc_no_cache::find_entry(uint64_t search_addr)
+cmc_no_cache_modified::StorageEntry* cmc_no_cache_modified::find_entry(uint64_t search_addr)
 {
   uint32_t set_idx = metadata_set(search_addr);
 
@@ -63,7 +63,7 @@ cmc_no_cache::StorageEntry* cmc_no_cache::find_entry(uint64_t search_addr)
   return nullptr;
 }
 
-cmc_no_cache::StorageEntry* cmc_no_cache::access_entry(uint64_t addr)
+cmc_no_cache_modified::StorageEntry* cmc_no_cache_modified::access_entry(uint64_t addr)
 {
   StorageEntry* entry = find_entry(addr);
 
@@ -76,7 +76,7 @@ cmc_no_cache::StorageEntry* cmc_no_cache::access_entry(uint64_t addr)
   return entry;
 }
 
-cmc_no_cache::StorageEntry* cmc_no_cache::find_victim(uint64_t addr)
+cmc_no_cache_modified::StorageEntry* cmc_no_cache_modified::find_victim(uint64_t addr)
 {
   uint32_t set_idx = metadata_set(addr);
   auto& set = storage[set_idx];
@@ -100,7 +100,7 @@ cmc_no_cache::StorageEntry* cmc_no_cache::find_victim(uint64_t addr)
   return nullptr;
 }
 
-void cmc_no_cache::prefetcher_initialize()
+void cmc_no_cache_modified::prefetcher_initialize()
 {
   CACHE* cache = this->intern_;
   metadata_ways = cache->NUM_WAY;
@@ -109,7 +109,7 @@ void cmc_no_cache::prefetcher_initialize()
   storage = std::vector<std::vector<StorageEntry>>(metadata_sets, std::vector<StorageEntry>(metadata_ways));
 }
 
-uint32_t cmc_no_cache::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint8_t cache_hit, bool useful_prefetch, access_type type, uint32_t metadata_in, bool late_prefetch, bool prefetch_from_this)
+uint32_t cmc_no_cache_modified::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint8_t cache_hit, bool useful_prefetch, access_type type, uint32_t metadata_in, bool late_prefetch, bool prefetch_from_this)
 {
   // Make sure it's a load
   champsim::block_number block_addr(addr);
@@ -124,17 +124,15 @@ uint32_t cmc_no_cache::prefetcher_cache_operate(champsim::address addr, champsim
 
   if ( !covered && match_entry )
   {
-    // printf("Prefetch From %lx\n", current_addr);
     access_entry(current_addr);
     for (auto pref_block: match_entry->addresses) {
-      prefetch_line(champsim::address(pref_block), true, 0 /*prefetch_metadata*/, ip);
+      prefetch_line(champsim::address(pref_block), true, 0 /*prefetch_metadata*/);
     }
   } 
-  else if ( match_entry )
-  {
-    // printf("Invalidate %lx\n", current_addr);
-    match_entry->valid = false;
-  }
+  // else if ( match_entry )
+  // {
+  //   match_entry->valid = false;
+  // }
 
   // Update Recorder
   bool train_trigger = (trigger.size() < 1 || match_entry) && trigger.size() < trigger_buffer_size;
@@ -154,12 +152,10 @@ uint32_t cmc_no_cache::prefetcher_cache_operate(champsim::address addr, champsim
 
       if (entry)
       {
-        // printf("Update Block %lx\n", trigger_addr);
         entry->addresses = recorder->entries;
       } 
       else 
       {
-        // printf("Fill Block %lx\n", trigger_addr);
         entry = find_victim(trigger_addr);
         entry->valid = true;
         entry->addr = trigger_addr;

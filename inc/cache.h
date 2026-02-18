@@ -224,6 +224,7 @@ public:
 
   long invalidate_entry(champsim::address inval_addr, bool is_metadata);
   bool prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata);
+  bool prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata, champsim::address ip);
 
   [[deprecated]] bool prefetch_line(uint64_t pf_addr, bool fill_this_level, uint32_t prefetch_metadata);
 
@@ -265,6 +266,7 @@ public:
     virtual void impl_replacement_cache_fill(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip,
                                              champsim::address victim_addr, access_type type) = 0;
     virtual void impl_replacement_final_stats() = 0;
+    virtual void impl_replacement_update_prefetcher_stats(bool useful) = 0;
   };
 
   template <typename... Ps>
@@ -309,6 +311,7 @@ public:
     void impl_replacement_cache_fill(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip,
                                      champsim::address victim_addr, access_type type) final;
     void impl_replacement_final_stats() final;
+    void impl_replacement_update_prefetcher_stats(bool useful) final;
   };
 
   std::unique_ptr<prefetcher_module_concept> pref_module_pimpl;
@@ -334,6 +337,7 @@ public:
   void impl_replacement_cache_fill(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip,
                                    champsim::address victim_addr, access_type type) const;
   void impl_replacement_final_stats() const;
+  void impl_replacement_update_prefetcher_stats(bool useful) const;
   // NOLINTEND(readability-make-member-function-const)
 
   template <typename... Ps, typename... Rs>
@@ -596,6 +600,19 @@ void CACHE::replacement_module_model<Rs...>::impl_replacement_final_stats()
     using namespace champsim::modules;
     if constexpr (replacement::has_final_stats<decltype(r)>)
       r.replacement_final_stats();
+  };
+
+  std::apply([&](auto&... r) { (..., process_one(r)); }, intern_);
+}
+template <typename... Rs>
+void CACHE::replacement_module_model<Rs...>::impl_replacement_update_prefetcher_stats(bool useful)
+{
+  [[maybe_unused]] auto process_one = [&](auto& r) {
+    using namespace champsim::modules;
+    if constexpr (replacement::has_update_prefetcher_stats<decltype(r), bool>)
+    {
+      r.replacement_update_prefetcher_stats(useful);
+    }
   };
 
   std::apply([&](auto&... r) { (..., process_one(r)); }, intern_);
