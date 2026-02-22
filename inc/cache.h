@@ -156,6 +156,7 @@ private:
   std::pair<mshr_type, request_type> mshr_and_forward_packet(const tag_lookup_type& handle_pkt);
 
   std::deque<tag_lookup_type> internal_PQ{};
+  std::deque<tag_lookup_type> internal_MQ{};
   std::deque<tag_lookup_type> inflight_tag_check{};
   std::deque<tag_lookup_type> translation_stash{};
 
@@ -231,6 +232,9 @@ public:
   [[deprecated("Use CACHE::prefetch_line(pf_addr, fill_this_level, prefetch_metadata) instead.")]] bool
   prefetch_line(uint64_t ip, uint64_t base_addr, uint64_t pf_addr, bool fill_this_level, uint32_t prefetch_metadata);
 
+  bool metadata_load(champsim::address meta_addr, champsim::address ip, uint32_t triggering_cpu, const std::shared_ptr<champsim::MetadataRequest>& request);
+  bool metadata_store(champsim::address meta_addr, champsim::address ip, uint32_t triggering_cpu, const std::shared_ptr<champsim::MetadataRequest>& request);
+
   void print_deadlock() final;
 
 #include "module_decl.inc"
@@ -250,7 +254,7 @@ public:
     virtual void impl_prefetcher_branch_operate(champsim::address ip, uint8_t branch_type, champsim::address branch_target) = 0;
 
     virtual void impl_prefetcher_metadata_request_fill(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk) = 0;
-    virtual void impl_prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk> blk, bool hit) = 0;
+    virtual void impl_prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk, bool hit) = 0;
   };
 
   struct replacement_module_concept {
@@ -288,7 +292,7 @@ public:
     void impl_prefetcher_branch_operate(champsim::address ip, uint8_t branch_type, champsim::address branch_target) final;
 
     void impl_prefetcher_metadata_request_fill(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk) final;
-    void impl_prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk> blk, bool hit) final;
+    void impl_prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk, bool hit) final;
   };
 
   template <typename... Rs>
@@ -327,7 +331,7 @@ public:
   void impl_prefetcher_final_stats() const;
   void impl_prefetcher_branch_operate(champsim::address ip, uint8_t branch_type, champsim::address branch_target) const;
   void impl_prefetcher_metadata_request_fill(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk) const;
-  void impl_prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk> blk, bool hit) const;
+  void impl_prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk, bool hit) const;
 
   void impl_initialize_replacement() const;
   [[nodiscard]] long impl_find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const BLOCK* current_set, champsim::address ip,
@@ -467,11 +471,11 @@ void CACHE::prefetcher_module_model<Ps...>::impl_prefetcher_metadata_request_fil
 }
 
 template <typename... Ps>
-void CACHE::prefetcher_module_model<Ps...>::impl_prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk> blk, bool hit)
+void CACHE::prefetcher_module_model<Ps...>::impl_prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk, bool hit)
 {
   [[maybe_unused]] auto process_one = [&](auto& p) {
     using namespace champsim::modules;
-    if constexpr (prefetcher::metadata_request_update<decltype(p), const std::shared_ptr<champsim::MetadataRequest>&, std::shared_ptr<champsim::MetadataBlk>, bool>)
+    if constexpr (prefetcher::metadata_request_update<decltype(p), const std::shared_ptr<champsim::MetadataRequest>&, std::shared_ptr<champsim::MetadataBlk>&, bool>)
       p.prefetcher_metadata_request_update(request, blk, hit);
   };
 

@@ -55,7 +55,7 @@ uint32_t triangel::prefetcher_cache_operate(champsim::address addr, champsim::ad
 
     champsim::block_number pred = predict(block_addr);
     for(uint64_t i = 0; i < cur_degree && pred != champsim::block_number(0); i++) {
-        prefetch_line(champsim::address(pred), true, 0);
+        prefetch_line(champsim::address(pred), true, 0, pc);
         pred = predict(pred);
     }
 

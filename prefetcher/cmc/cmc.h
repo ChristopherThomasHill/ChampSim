@@ -11,12 +11,9 @@
 
 class cmc : public champsim::modules::prefetcher
 {
-  using channel_type = champsim::channel;
-  using request_type = typename channel_type::request_type;
   using prefetcher::prefetcher;
 
   CACHE* cache = nullptr;
-  champsim::channel cache_channel;
 
   const unsigned int trigger_buffer_size = 4;
   const int degree = 4;
@@ -91,8 +88,6 @@ class cmc : public champsim::modules::prefetcher
   };
 
   champsim::address metadata_addr(champsim::address ip, champsim::block_number block_addr);
-  void send_metadata_load(champsim::address ip, champsim::block_number block_addr, bool covered);
-  void send_metadata_store(champsim::address ip, champsim::block_number block_addr, std::vector<champsim::block_number> entries);
 
 public:
 
@@ -100,10 +95,9 @@ public:
 
   void prefetcher_initialize();
   uint32_t prefetcher_cache_operate(champsim::address, champsim::address, uint8_t, bool, access_type, uint32_t metadata_in, bool late_prefetch, bool prefetch_from_this);
-  void prefetcher_cycle_operate();
 
   void prefetcher_metadata_request_fill(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk);
-  void prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk> blk, bool hit);
+  void prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk, bool hit);
 };
 
 #endif

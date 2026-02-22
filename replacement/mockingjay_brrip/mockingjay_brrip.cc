@@ -167,18 +167,19 @@ long mockingjay_brrip::find_victim(uint32_t triggering_cpu, uint64_t instr_id, l
 
     for (uint32_t way = DATA_WAYS; way < NUM_WAY; way++) {
         if (current_set[way].valid == false) {
-            return way;
+          return way;
         }
     }
 
     while (true) {
         for (uint32_t way = DATA_WAYS; way < NUM_WAY; way++) {
-            if (rrip[set][way] >= 3)
-                return way;
+            if (rrip[set][way] >= 3) {
+              return way;
+            }
         }
 
         for (uint32_t way = DATA_WAYS; way < NUM_WAY; way++) {
-            rrip[set][way] +=1;
+            rrip[set][way] += 1;
         }
     }
   }
@@ -218,6 +219,7 @@ void mockingjay_brrip::update_replacement_state(uint32_t triggering_cpu, long se
 {
   if (type == access_type::METADATA_LOAD || type == access_type::METADATA_STORE)
   {
+    assert(way >= DATA_WAYS);
     if (way < NUM_WAY)
     {
         if (!hit)

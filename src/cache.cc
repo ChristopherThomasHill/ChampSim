@@ -20,6 +20,7 @@
 #include <cassert>
 #include <cmath>
 #include <iomanip>
+#include <iostream>
 #include <numeric>
 #include <fmt/core.h>
 
@@ -327,7 +328,11 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
                                 hit);
 
   if (handle_pkt.metadata) {
-    impl_prefetcher_metadata_request_update(handle_pkt.metadata_request, way->metadata_blk, hit);
+    std::shared_ptr<champsim::MetadataBlk> metadata_blk = hit ? way->metadata_blk : nullptr;
+    impl_prefetcher_metadata_request_update(handle_pkt.metadata_request, metadata_blk, hit);
+    
+    if (hit)
+      way->metadata_blk = metadata_blk;
   }
 
   if (hit) {
@@ -529,13 +534,43 @@ long CACHE::operate()
 
   // Perform fills
   champsim::bandwidth fill_bw{MAX_FILL};
-  for (auto q : {std::ref(MSHR), std::ref(inflight_writes)}) {
-    auto [fill_begin, fill_end] = champsim::get_span_p(std::cbegin(q.get()), std::cend(q.get()), fill_bw,
-                                                       [time = current_time](const auto& x) { return x.data_promise.is_ready_at(time); });
-    auto complete_end = std::find_if_not(fill_begin, fill_end, [this](const auto& x) { return this->handle_fill(x); });
-    fill_bw.consume(std::distance(fill_begin, complete_end));
-    q.get().erase(fill_begin, complete_end);
-  }
+  // for (auto q : {std::ref(MSHR), std::ref(inflight_writes)}) {
+  //   auto [fill_begin, fill_end] = champsim::get_span_p(std::cbegin(q.get()), std::cend(q.get()), fill_bw,
+  //                                                      [time = current_time](const auto& x) { return x.data_promise.is_ready_at(time); });
+  //   auto complete_end = std::find_if_not(fill_begin, fill_end, [this](const auto& x) { return this->handle_fill(x); });
+  //   fill_bw.consume(std::distance(fill_begin, complete_end));
+  //   q.get().erase(fill_begin, complete_end);
+  // }
+
+  auto process_fills = [this, &fill_bw](auto& q) {
+    auto ready = [time = current_time](const auto& x) { return x.data_promise.is_ready_at(time); };
+    auto is_non_metadata = [](const auto& x) { return !x.metadata; };
+
+    // Bring ready entries to the front
+    auto ready_end = std::stable_partition(std::begin(q), std::end(q), ready);
+
+    // Within ready entries, prioritize non-metadata first
+    auto metadata_begin = std::stable_partition(std::begin(q), ready_end, is_non_metadata);
+
+    // Pass 1: non-metadata ready fills
+    auto [nm_begin, nm_end] = champsim::get_span_p(std::begin(q), metadata_begin, fill_bw, [](const auto&) { return true; });
+    auto nm_complete_end = std::find_if_not(nm_begin, nm_end, [this](const auto& x) { return this->handle_fill(x); });
+    fill_bw.consume(std::distance(nm_begin, nm_complete_end));
+    q.erase(nm_begin, nm_complete_end);
+
+    // Recompute iterators because erase invalidates them
+    ready_end = std::stable_partition(std::begin(q), std::end(q), ready);
+    metadata_begin = std::stable_partition(std::begin(q), ready_end, is_non_metadata);
+
+    // Pass 2: metadata ready fills (only leftover bandwidth)
+    auto [md_begin, md_end] = champsim::get_span_p(metadata_begin, ready_end, fill_bw, [](const auto&) { return true; });
+    auto md_complete_end = std::find_if_not(md_begin, md_end, [this](const auto& x) { return this->handle_fill(x); });
+    fill_bw.consume(std::distance(md_begin, md_complete_end));
+    q.erase(md_begin, md_complete_end);
+  };
+
+  process_fills(MSHR);
+  process_fills(inflight_writes);
 
   // Initiate tag checks
   const champsim::bandwidth::maximum_type bandwidth_from_tag_checks{champsim::to_underlying(MAX_TAG) * (long)(HIT_LATENCY / clock_period)
@@ -575,6 +610,10 @@ long CACHE::operate()
       champsim::transform_while_n(internal_PQ, std::back_inserter(inflight_tag_check), initiate_tag_bw, can_translate, initiate_tag_check<false>());
   initiate_tag_bw.consume(pq_bandwidth_consumed);
 
+  auto mq_bandwidth_consumed =
+      champsim::transform_while_n(internal_MQ, std::back_inserter(inflight_tag_check), initiate_tag_bw, can_translate, initiate_tag_check<false>());
+  initiate_tag_bw.consume(mq_bandwidth_consumed);
+
   // Issue translations
   std::for_each(std::begin(inflight_tag_check), std::end(inflight_tag_check), [this](auto& x) { this->issue_translation(x); });
   std::for_each(std::begin(translation_stash), std::end(translation_stash), [this](auto& x) { this->issue_translation(x); });
@@ -593,13 +632,47 @@ long CACHE::operate()
     return this->handle_miss(pkt); // Treat writes (that is, stores) like reads
   };
   champsim::bandwidth tag_check_bw{MAX_TAG};
-  auto [tag_check_ready_begin, tag_check_ready_end] =
-      champsim::get_span_p(std::begin(inflight_tag_check), std::end(inflight_tag_check), tag_check_bw,
-                           [is_ready, is_translated](const auto& pkt) { return is_ready(pkt) && is_translated(pkt); });
-  auto hits_end = std::stable_partition(tag_check_ready_begin, tag_check_ready_end, [this](const auto& pkt) { return this->try_hit(pkt); });
-  auto finish_tag_check_end = std::stable_partition(hits_end, tag_check_ready_end, do_handle_miss);
-  tag_check_bw.consume(std::distance(tag_check_ready_begin, finish_tag_check_end));
-  inflight_tag_check.erase(tag_check_ready_begin, finish_tag_check_end);
+  // auto [tag_check_ready_begin, tag_check_ready_end] =
+  //     champsim::get_span_p(std::begin(inflight_tag_check), std::end(inflight_tag_check), tag_check_bw,
+  //                          [is_ready, is_translated](const auto& pkt) { return is_ready(pkt) && is_translated(pkt); });
+  // auto hits_end = std::stable_partition(tag_check_ready_begin, tag_check_ready_end, [this](const auto& pkt) { return this->try_hit(pkt); });
+  // auto finish_tag_check_end = std::stable_partition(hits_end, tag_check_ready_end, do_handle_miss);
+  // tag_check_bw.consume(std::distance(tag_check_ready_begin, finish_tag_check_end));
+  // inflight_tag_check.erase(tag_check_ready_begin, finish_tag_check_end);
+
+  // Move ready+translated to the front (bounded later by get_span_p)
+  auto is_ready_and_translated = [is_ready, is_translated](const auto& pkt) {
+    return is_ready(pkt) && is_translated(pkt);
+  };
+
+  auto ready_end = std::stable_partition(std::begin(inflight_tag_check), std::end(inflight_tag_check), is_ready_and_translated);
+
+  // Among ready entries, prioritize non-metadata
+  auto metadata_begin = std::stable_partition(std::begin(inflight_tag_check), ready_end,
+                                              [](const auto& pkt) { return !pkt.metadata; });
+
+  // -------- Pass 1: non-metadata --------
+  auto [nm_begin, nm_end] = champsim::get_span_p(std::begin(inflight_tag_check), metadata_begin, tag_check_bw,
+                                                [](const auto&) { return true; });
+
+  auto nm_hits_end = std::stable_partition(nm_begin, nm_end, [this](const auto& pkt) { return this->try_hit(pkt); });
+  auto nm_done_end = std::stable_partition(nm_hits_end, nm_end, do_handle_miss);
+  tag_check_bw.consume(std::distance(nm_begin, nm_done_end));
+  inflight_tag_check.erase(nm_begin, nm_done_end);
+
+  // Repartition after erase
+  ready_end = std::stable_partition(std::begin(inflight_tag_check), std::end(inflight_tag_check), is_ready_and_translated);
+  metadata_begin = std::stable_partition(std::begin(inflight_tag_check), ready_end,
+                                        [](const auto& pkt) { return !pkt.metadata; });
+
+  // -------- Pass 2: metadata (only leftover bandwidth) --------
+  auto [md_begin, md_end] = champsim::get_span_p(metadata_begin, ready_end, tag_check_bw,
+                                                [](const auto&) { return true; });
+
+  auto md_hits_end = std::stable_partition(md_begin, md_end, [this](const auto& pkt) { return this->try_hit(pkt); });
+  auto md_done_end = std::stable_partition(md_hits_end, md_end, do_handle_miss);
+  tag_check_bw.consume(std::distance(md_begin, md_done_end));
+  inflight_tag_check.erase(md_begin, md_done_end);
 
   impl_prefetcher_cycle_operate();
 
@@ -701,6 +774,61 @@ bool CACHE::prefetch_line(uint64_t /*deprecated*/, uint64_t /*deprecated*/, uint
   return prefetch_line(champsim::address{pf_addr}, fill_this_level, prefetch_metadata);
 }
 // LCOV_EXCL_STOP
+
+bool CACHE::metadata_load(champsim::address meta_addr, champsim::address ip, uint32_t triggering_cpu, const std::shared_ptr<champsim::MetadataRequest>& request)
+{
+  request_type meta_packet;
+  meta_packet.type = access_type::METADATA_LOAD;
+  meta_packet.cpu = triggering_cpu;
+  meta_packet.address = meta_addr;
+  meta_packet.v_address = meta_addr;
+  meta_packet.metadata = true;
+  meta_packet.ip = ip;
+  meta_packet.is_translated = true;
+  meta_packet.metadata_request = request;
+
+  internal_MQ.emplace_back(meta_packet);
+
+  // tag_lookup_type lookup_pkt{meta_packet};
+
+  // try_hit(lookup_pkt);
+
+  return true;
+}
+
+bool CACHE::metadata_store(champsim::address meta_addr, champsim::address ip, uint32_t triggering_cpu, const std::shared_ptr<champsim::MetadataRequest>& request)
+{
+  request_type meta_packet;
+  meta_packet.type = access_type::METADATA_STORE;
+  meta_packet.cpu = triggering_cpu;
+  meta_packet.address = meta_addr;
+  meta_packet.v_address = meta_addr;
+  meta_packet.metadata = true;
+  meta_packet.ip = ip;
+  meta_packet.is_translated = true;
+  meta_packet.metadata_request = request;
+
+  // tag_lookup_type lookup_pkt{meta_packet};
+
+  // bool hit = try_hit(lookup_pkt);
+
+  // if (hit)
+    // return true;
+
+  // mshr_type fill_mshr{lookup_pkt, current_time};
+
+  // mshr_type::returned_value rv{};
+  // rv.data = champsim::address{0};
+  // rv.pf_metadata = lookup_pkt.pf_metadata;
+
+  // fill_mshr.data_promise = champsim::waitable<mshr_type::returned_value>{rv, current_time};
+
+  // handle_fill(fill_mshr);
+
+  internal_MQ.emplace_back(meta_packet);
+
+  return true;
+}
 
 void CACHE::finish_packet(const response_type& packet)
 {
@@ -916,7 +1044,7 @@ void CACHE::impl_prefetcher_metadata_request_fill(const std::shared_ptr<champsim
   pref_module_pimpl->impl_prefetcher_metadata_request_fill(request, blk);
 }
     
-void CACHE::impl_prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk> blk, bool hit) const
+void CACHE::impl_prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk, bool hit) const
 {
   pref_module_pimpl->impl_prefetcher_metadata_request_update(request, blk, hit);
 }

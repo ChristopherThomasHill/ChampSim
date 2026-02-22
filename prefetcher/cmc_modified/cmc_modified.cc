@@ -120,7 +120,7 @@ void cmc_modified::prefetcher_metadata_request_fill(const std::shared_ptr<champs
   blk = std::make_shared<CMCBlock>(cmc_request.entries);
 }
 
-void cmc_modified::prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk> blk, bool hit)
+void cmc_modified::prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk, bool hit)
 {
   CMCRequest& cmc_request = *static_cast<CMCRequest*>(request.get());
 

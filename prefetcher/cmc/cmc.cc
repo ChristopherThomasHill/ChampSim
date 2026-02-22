@@ -40,45 +40,12 @@ void cmc::Recorder::reset()
 
 champsim::address cmc::metadata_addr(champsim::address ip, champsim::block_number block_addr)
 {
-  return champsim::address((ip.to<uint64_t>() << 6) ^ (block_addr.to<uint64_t>() << 6));
-}
-
-void cmc::send_metadata_load(champsim::address ip, champsim::block_number block_addr, bool covered)
-{
-  request_type packet;
-
-  packet.address = metadata_addr(ip, block_addr);
-  packet.v_address = metadata_addr(ip, block_addr);
-  packet.cpu = this->cache->cpu;
-  packet.instr_id = 0;
-  packet.ip = ip;
-  packet.type = access_type::METADATA_LOAD;
-  packet.metadata = true;
-  packet.metadata_request = std::make_shared<CMCRequest>(CMCRequest::request_type::LOAD, ip, block_addr, covered);
-
-  this->cache_channel.add_rq(packet);
-}
-
-void cmc::send_metadata_store(champsim::address ip, champsim::block_number block_addr, std::vector<champsim::block_number> entries)
-{
-  request_type packet;
-
-  packet.address = metadata_addr(ip, block_addr);
-  packet.v_address = metadata_addr(ip, block_addr);
-  packet.cpu = this->cache->cpu;
-  packet.instr_id = 0;
-  packet.ip = ip;
-  packet.type = access_type::METADATA_STORE;
-  packet.metadata = true;
-  packet.metadata_request = std::make_shared<CMCRequest>(CMCRequest::request_type::STORE, ip, block_addr, entries);
-
-  this->cache_channel.add_wq(packet);
+  return champsim::address((ip.to<uint64_t>() << LOG2_BLOCK_SIZE) ^ (block_addr.to<uint64_t>() << LOG2_BLOCK_SIZE));
 }
 
 void cmc::prefetcher_initialize()
 {
   cache = this->intern_;
-  this->cache->upper_levels.push_back(&this->cache_channel);
   recorder = new Recorder(degree);
 }
 
@@ -93,21 +60,18 @@ uint32_t cmc::prefetcher_cache_operate(champsim::address addr, champsim::address
   if(type != access_type::LOAD || block_addr == champsim::block_number(0))
     return metadata_in;
 
+  // bool covered = false;
   bool covered = (cache_hit || late_prefetch) && !prefetch_from_this;
 
+  // printf("Load %lx Hit %u\n", block_addr.to<uint64_t>(), (bool)cache_hit);
+
   // Attempt Prediction
-  send_metadata_load(ip, block_addr, covered);
+  // if (!cache->warmup) printf("Sent Load Addr: %lx\n", metadata_addr(ip, block_addr).to<uint64_t>());
+  // printf("Send Load: %lx %lx\n", addr.to<uint64_t>(), metadata_addr(ip, block_addr).to<uint64_t>());
+  // printf("Load %lx Hit %u Late %u This %u Covered %u\n", block_addr.to<uint64_t>(), (bool)cache_hit, late_prefetch, prefetch_from_this, covered);
+  cache->metadata_load(metadata_addr(ip, block_addr), ip, 0 /*cpu*/, std::make_shared<CMCRequest>(CMCRequest::request_type::LOAD, ip, block_addr, covered));
 
   return metadata_in;
-}
-
-void cmc::prefetcher_cycle_operate()
-{
-  // Clear Channel If Response Exists
-  while (!this->cache_channel.returned.empty()) {
-    auto response = this->cache_channel.returned.front();
-    this->cache_channel.returned.pop_front();
-  }
 }
 
 void cmc::prefetcher_metadata_request_fill(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk)
@@ -116,18 +80,22 @@ void cmc::prefetcher_metadata_request_fill(const std::shared_ptr<champsim::Metad
 
   assert(cmc_request.type == CMCRequest::request_type::STORE);
 
+  // if (!cache->warmup) printf("Receive Store Addr: %lx\n", metadata_addr(cmc_request.pc, cmc_request.block_addr).to<uint64_t>());
+
   // printf("Fill Block %lx\n", metadata_addr(cmc_request.pc, cmc_request.block_addr).to<uint64_t>());
   blk = std::make_shared<CMCBlock>(cmc_request.entries);
 }
 
-void cmc::prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk> blk, bool hit)
+void cmc::prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk, bool hit)
 {
   CMCRequest& cmc_request = *static_cast<CMCRequest*>(request.get());
 
   if (cmc_request.type == CMCRequest::request_type::LOAD)
   {
+    // printf("Receive Load Addr: %lx\n", metadata_addr(cmc_request.pc, cmc_request.block_addr).to<uint64_t>());
     if (hit)
     {
+      assert(blk != nullptr);
       if (cmc_request.covered)
       {
         // printf("Invalidate %lx\n", metadata_addr(cmc_request.pc, cmc_request.block_addr).to<uint64_t>());
@@ -139,11 +107,14 @@ void cmc::prefetcher_metadata_request_update(const std::shared_ptr<champsim::Met
 
         // printf("Prefetch From %lx\n", metadata_addr(cmc_request.pc, cmc_request.block_addr).to<uint64_t>());
         for (auto pf_block: cmc_blk.addresses)
+        {
+          // printf("Prefetch %lx %lx\n", pf_block.to<uint64_t>(), cmc_request.pc);
           prefetch_line(champsim::address(pf_block), true, 0 /*prefetch_metadata*/, cmc_request.pc);
+        }
       }
     }
 
-    bool train_trigger = (trigger.size() < 1 || hit) && trigger.size() < trigger_buffer_size;
+    bool train_trigger = (trigger.size() < 1 || hit) && trigger.size() < trigger_buffer_size && !cmc_request.covered;
     if (train_trigger) {
       trigger.push_back(RecordEntry(cmc_request.pc, cmc_request.block_addr));
     }
@@ -155,7 +126,8 @@ void cmc::prefetcher_metadata_request_update(const std::shared_ptr<champsim::Met
 
       if (finished)
       {
-        send_metadata_store(trigger_head.pc, trigger_head.block_addr, recorder->entries);
+        // if (!cache->warmup)  printf("Sent Store Addr: %lx\n", metadata_addr(trigger_head.pc, trigger_head.block_addr).to<uint64_t>());
+        cache->metadata_store(metadata_addr(trigger_head.pc, trigger_head.block_addr), trigger_head.pc, 0 /*cpu*/, std::make_shared<CMCRequest>(CMCRequest::request_type::STORE, trigger_head.pc, trigger_head.block_addr, recorder->entries));
         trigger.pop_front();
         recorder->reset();
       }
@@ -165,6 +137,8 @@ void cmc::prefetcher_metadata_request_update(const std::shared_ptr<champsim::Met
   {
     if (hit) // Misses handled by fill logic
     {
+      // if (!cache->warmup) printf("Receive Store Addr: %lx\n", metadata_addr(cmc_request.pc, cmc_request.block_addr).to<uint64_t>());
+      assert(blk != nullptr);
       // printf("Update Block %lx\n", metadata_addr(cmc_request.pc, cmc_request.block_addr).to<uint64_t>());
       blk = std::make_shared<CMCBlock>(cmc_request.entries);
     }

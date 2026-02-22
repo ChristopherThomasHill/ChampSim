@@ -47,7 +47,7 @@ uint64_t cmc_no_cache::metadata_addr(champsim::address ip, champsim::block_numbe
 
 uint32_t cmc_no_cache::metadata_set(uint64_t metadata_addr)
 {
-  return metadata_addr & (metadata_sets - 1);
+  return (metadata_addr >> LOG2_BLOCK_SIZE) & (metadata_sets - 1);
 }
 
 cmc_no_cache::StorageEntry* cmc_no_cache::find_entry(uint64_t search_addr)
@@ -116,17 +116,22 @@ uint32_t cmc_no_cache::prefetcher_cache_operate(champsim::address addr, champsim
   if( type != access_type::LOAD || block_addr == champsim::block_number(0) )
     return metadata_in;
 
+  // bool covered = false;
   bool covered = (cache_hit || late_prefetch) && !prefetch_from_this;
 
   // Attempt Prediction
   uint64_t current_addr = metadata_addr(ip, block_addr);
   StorageEntry* match_entry = find_entry(current_addr);
 
+  // printf("Load %lx Hit %u Late %u This %u Covered %u\n", block_addr.to<uint64_t>(), (bool)cache_hit, late_prefetch, prefetch_from_this, covered);
+  // printf("Send Load: %lx %lx\n", addr.to<uint64_t>(), current_addr);
+
   if ( !covered && match_entry )
   {
     // printf("Prefetch From %lx\n", current_addr);
     access_entry(current_addr);
     for (auto pref_block: match_entry->addresses) {
+      // printf("Prefetch %lx %lx\n", pref_block.to<uint64_t>(), ip.to<uint64_t>());
       prefetch_line(champsim::address(pref_block), true, 0 /*prefetch_metadata*/, ip);
     }
   } 
@@ -137,7 +142,7 @@ uint32_t cmc_no_cache::prefetcher_cache_operate(champsim::address addr, champsim
   }
 
   // Update Recorder
-  bool train_trigger = (trigger.size() < 1 || match_entry) && trigger.size() < trigger_buffer_size;
+  bool train_trigger = (trigger.size() < 1 || match_entry) && trigger.size() < trigger_buffer_size && !covered;
   if (train_trigger) {
     trigger.push_back(RecordEntry(ip, block_addr));
   }
