@@ -230,8 +230,16 @@ void streamline::update_set_dueling(uint32_t triggering_cpu, long set, champsim:
 
   if (hit)
   {
-    if (metadata_access) half_metadata_set_duel_counter += prefetch_set_duel_increment;
-    else half_metadata_set_duel_counter += 16;
+    if (metadata_access) 
+    {
+      half_set_duel_counter += prefetch_set_duel_increment;
+      half_metadata_set_duel_counter += 1;
+    }
+    else
+    {
+      half_set_duel_counter += 16;
+      half_demand_set_duel_counter += 1;
+    }
   }
   else
   {
@@ -255,8 +263,16 @@ void streamline::update_set_dueling(uint32_t triggering_cpu, long set, champsim:
 
   if (hit)
   {
-    if (metadata_access) quarter_metadata_set_duel_counter += prefetch_set_duel_increment;
-    else quarter_metadata_set_duel_counter += 16;
+    if (metadata_access)
+    {
+      quarter_set_duel_counter += prefetch_set_duel_increment;
+      quarter_metadata_set_duel_counter += 1;
+    }
+    else 
+    {
+      quarter_set_duel_counter += 16;
+      quarter_demand_set_duel_counter += 1;
+    }
   }
   else
   {
@@ -270,7 +286,7 @@ void streamline::update_set_dueling(uint32_t triggering_cpu, long set, champsim:
     way = victim_way;
   }
 
-  if (way != NUM_WAY) set_etr(half_metadata_cache[set], set, way, triggering_cpu, ip, type, hit);
+  if (way != NUM_WAY) set_etr(quarter_metadata_cache[set], set, way, triggering_cpu, ip, type, hit);
 
   // no metadata
   if (!metadata_access)
@@ -280,7 +296,8 @@ void streamline::update_set_dueling(uint32_t triggering_cpu, long set, champsim:
 
     if (hit)
     {
-      no_metadata_set_duel_counter += 16;
+      no_set_duel_counter += 16;
+      no_demand_set_duel_counter += 1;
     }
     else
     {
@@ -294,24 +311,31 @@ void streamline::update_set_dueling(uint32_t triggering_cpu, long set, champsim:
       way = victim_way;
     }
 
-    if (way != NUM_WAY) set_etr(half_metadata_cache[set], set, way, triggering_cpu, ip, type, hit);
+    if (way != NUM_WAY) set_etr(no_metadata_cache[set], set, way, triggering_cpu, ip, type, hit);
   }
 
   metadata_partition_epoch += 1;
   if (metadata_partition_epoch >= METADATA_PARTITION_EPOCH_LENGTH)
   {
-    if (half_metadata_set_duel_counter > quarter_metadata_set_duel_counter && half_metadata_set_duel_counter > no_metadata_set_duel_counter)
+    if (half_set_duel_counter > quarter_set_duel_counter && half_set_duel_counter > no_set_duel_counter)
       metadata_ways = NUM_WAY / 2;
-    else if (quarter_metadata_set_duel_counter > no_metadata_set_duel_counter) 
+    else if (quarter_set_duel_counter > no_set_duel_counter) 
       metadata_ways = NUM_WAY / 4;
     else
       metadata_ways = 0;
 
-    printf("Finish Partition Epoch : Half - %u Quarter - %u None - %u --> METADATA_WAYS %u\n", half_metadata_set_duel_counter, quarter_metadata_set_duel_counter, no_metadata_set_duel_counter, metadata_ways);
+    printf("Finish Partition Epoch : Half - %u (Dem: %u Met: %u) Quarter - %u (Dem: %u Met: %u) None - %u (Dem: %u Met: 0) --> METADATA_WAYS %u\n", half_set_duel_counter, half_demand_set_duel_counter, half_metadata_set_duel_counter, quarter_set_duel_counter, quarter_demand_set_duel_counter, quarter_metadata_set_duel_counter, no_set_duel_counter, no_demand_set_duel_counter, metadata_ways);
+    half_set_duel_counter = 0;
+    quarter_set_duel_counter = 0;
+    no_set_duel_counter = 0;
+    metadata_partition_epoch = 0;
+
     half_metadata_set_duel_counter = 0;
     quarter_metadata_set_duel_counter = 0;
-    no_metadata_set_duel_counter = 0;
-    metadata_partition_epoch = 0;
+
+    half_demand_set_duel_counter = 0;
+    quarter_demand_set_duel_counter = 0;
+    no_demand_set_duel_counter = 0;
   }
 }
 
@@ -358,11 +382,18 @@ streamline::streamline(CACHE* cache, long sets, long ways)
     }
   }
 
-  metadata_partition_epoch = 0;
-  no_metadata_set_duel_counter = 0;
-  quarter_metadata_set_duel_counter = 0;
-  half_metadata_set_duel_counter = 0;
   metadata_ways = NUM_WAY / 4;
+
+  metadata_partition_epoch = 0;
+  no_set_duel_counter = 0;
+  quarter_set_duel_counter = 0;
+  half_set_duel_counter = 0;
+
+  half_metadata_set_duel_counter = 0;
+  quarter_metadata_set_duel_counter = 0;
+  half_demand_set_duel_counter = 0;
+  quarter_demand_set_duel_counter = 0;
+  no_demand_set_duel_counter = 0;
 
   prefetch_accuracy_epoch = 0;
   prefetch_useful_count = 0;

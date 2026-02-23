@@ -63,9 +63,16 @@ class streamline : public champsim::modules::replacement {
   uint32_t metadata_ways;
 
   uint32_t metadata_partition_epoch;
+  uint32_t half_set_duel_counter;
+  uint32_t quarter_set_duel_counter;
+  uint32_t no_set_duel_counter;
+
   uint32_t half_metadata_set_duel_counter;
   uint32_t quarter_metadata_set_duel_counter;
-  uint32_t no_metadata_set_duel_counter;
+
+  uint32_t half_demand_set_duel_counter;
+  uint32_t quarter_demand_set_duel_counter;
+  uint32_t no_demand_set_duel_counter;
 
   uint32_t prefetch_accuracy_epoch;
   uint32_t prefetch_useful_count;

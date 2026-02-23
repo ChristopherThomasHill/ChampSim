@@ -1,5 +1,5 @@
 {
-    "executable_name": "mockingjay_triangel_1_core",
+    "executable_name": "streamline_cmc_modified_1_core",
     "block_size": 64,
     "page_size": 4096,
     "heartbeat_frequency": 10000000,
@@ -145,8 +145,8 @@
         "prefetch_as_load": false,
         "virtual_prefetch": false,
         "prefetch_activate": "LOAD,PREFETCH",
-        "prefetcher": "triangel",
-        "replacement": "mockingjay"
+        "prefetcher": "cmc_modified",
+        "replacement": "streamline"
     },
     "physical_memory": {
         "data_rate": 3200,
