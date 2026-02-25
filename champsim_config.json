@@ -1,5 +1,5 @@
 {
-    "executable_name": "streamline_cmc_modified_1_core",
+    "executable_name": "reuse_info_cmc_modified_1_core",
     "block_size": 64,
     "page_size": 4096,
     "heartbeat_frequency": 10000000,
@@ -146,7 +146,7 @@
         "virtual_prefetch": false,
         "prefetch_activate": "LOAD,PREFETCH",
         "prefetcher": "cmc_modified",
-        "replacement": "streamline"
+        "replacement": "reuse_info"
     },
     "physical_memory": {
         "data_rate": 3200,

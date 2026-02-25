@@ -427,7 +427,7 @@ long streamline::find_victim(uint32_t triggering_cpu, uint64_t instr_id, long se
 
   // your eviction policy goes here
   int max_etr = 0;
-  int victim_way = 0;
+  int victim_way = min_way;
   for (uint32_t way = min_way; way < max_way; way++) {
     if (abs(etr[set][way]) > max_etr ||
           (abs(etr[set][way]) == max_etr &&

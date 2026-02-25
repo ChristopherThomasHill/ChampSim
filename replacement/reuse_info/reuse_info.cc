@@ -14,31 +14,31 @@ void reuse_info::track_info(long set, champsim::block_number block_addr, champsi
     return;
 
   uint64_t addr = block_addr.to<uint64_t>();
+  const bool metadata = (type == access_type::METADATA_LOAD) || (type == access_type::METADATA_STORE);
+  TrackerKey key{addr, metadata};
 
-  if (tracker.count(addr)) {
+  if (tracker.count(key)) {
     if (type == access_type::METADATA_STORE) {
-      reuse_table[std::get<2>(tracker[addr])].meta_load_after += 1;
+      reuse_table[std::get<2>(tracker[key])].meta_store_after += 1;
     }
     else {
-      uint64_t reuse_distance = set_age[set] - std::get<0>(tracker[addr]);
+      uint64_t reuse_distance = set_age[set] - std::get<0>(tracker[key]);
       
       if (reuse_distance >= MAX_REUSE) {
-        reuse_table[std::get<2>(tracker[addr])].no_reuse += 1;
+        reuse_table[std::get<2>(tracker[key])].no_reuse += 1;
       } else {
         if (type == access_type::PREFETCH)
-          reuse_table[std::get<2>(tracker[addr])].prefetch_reuse[reuse_distance] += 1;
+          reuse_table[std::get<2>(tracker[key])].prefetch_reuse[reuse_distance] += 1;
         else if (type == access_type::METADATA_LOAD)
-          reuse_table[std::get<2>(tracker[addr])].metadata_load_reuse[reuse_distance] += 1;
-        else if (type == access_type::METADATA_STORE)
-          reuse_table[std::get<2>(tracker[addr])].metadata_store_reuse[reuse_distance] += 1;
+          reuse_table[std::get<2>(tracker[key])].metadata_load_reuse[reuse_distance] += 1;
         else
-          reuse_table[std::get<2>(tracker[addr])].demand_reuse[reuse_distance] += 1;
+          reuse_table[std::get<2>(tracker[key])].demand_reuse[reuse_distance] += 1;
       }
     }
   }
 
   Signature sig = {ip, type};
-  tracker[addr] = std::make_tuple(set_age[set], set, sig);
+  tracker[key] = std::make_tuple(set_age[set], set, sig);
   set_age[set]++;
 }
 
@@ -76,7 +76,7 @@ void reuse_info::update_replacement_state(uint32_t triggering_cpu, long set, lon
 
 void reuse_info::replacement_final_stats()
 {
-  for (const auto& [addr, dataTuple] : tracker) {
+  for (const auto& [key, dataTuple] : tracker) {
     const auto& [age, set, sig] = dataTuple;
 
     if (set_age[set] - age >= MAX_REUSE) {
@@ -110,7 +110,9 @@ void reuse_info::replacement_final_stats()
       sum_map_total(info.prefetch_reuse);
       sum_map_total(info.demand_reuse);
       sum_map_total(info.metadata_load_reuse);
-      sum_map_total(info.metadata_store_reuse);
+
+      total += info.no_reuse;
+      total += info.meta_store_after;
 
       if (total >= 30) {
           sorted_list.push_back({&sig, &info, total});
@@ -126,10 +128,10 @@ void reuse_info::replacement_final_stats()
   // ---------------------------------------------------------
   // 4. Print Dynamic Header
   // ---------------------------------------------------------
-  std::cout << "PC,AccessType,TotalSigSeen,NoReuse,MetaLoadAfter";
+  std::cout << "PC,AccessType,TotalSigSeen,NoReuse,MetaStoreAfter";
 
   // We define the types in an array to loop over them for the header
-  std::string types[] = {"Prefetch", "Demand", "MetaLoad", "MetaStore"};
+  std::string types[] = {"Prefetch", "Demand", "MetaLoad"};
 
   for (const std::string& type_name : types) {
       for (uint64_t i = 0; i < NUM_BINS; ++i) {
@@ -153,7 +155,7 @@ void reuse_info::replacement_final_stats()
                 << access_type_names[static_cast<int>(sig.type)] << ","
                 << item.total_count << ","
                 << reuse_table[sig].no_reuse << ","
-                << reuse_table[sig].meta_load_after;
+                << reuse_table[sig].meta_store_after;
 
       // Helper to sum a specific map for a specific bin index
       auto get_bin_sum = [&](const std::unordered_map<uint64_t, uint64_t>& m, uint64_t bin_idx) {
@@ -174,9 +176,6 @@ void reuse_info::replacement_final_stats()
 
       // Loop 3: MetaLoad Columns
       for (uint64_t i = 0; i < NUM_BINS; ++i) std::cout << "," << get_bin_sum(info.metadata_load_reuse, i);
-
-      // Loop 4: MetaStore Columns
-      for (uint64_t i = 0; i < NUM_BINS; ++i) std::cout << "," << get_bin_sum(info.metadata_store_reuse, i);
 
       std::cout << "\n";
   }
