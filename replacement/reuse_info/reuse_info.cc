@@ -58,7 +58,7 @@ long reuse_info::find_victim(uint32_t triggering_cpu, uint64_t instr_id, long se
 void reuse_info::replacement_cache_fill(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip, champsim::address victim_addr,
                                  access_type type)
 {
-  track_info(set, champsim::block_number(full_addr), ip, type);
+  if (way == NUM_WAY) return;
 
   // Mark the way as being used on the current cycle
   last_used_cycles.at((std::size_t)(set * NUM_WAY + way)) = cycle++;

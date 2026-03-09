@@ -266,9 +266,9 @@ public:
     virtual long impl_find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const BLOCK* current_set, champsim::address ip,
                                   champsim::address full_addr, access_type type) = 0;
     virtual void impl_update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip,
-                                               champsim::address victim_addr, access_type type, bool hit) = 0;
+                                               champsim::address victim_addr, access_type type, bool hit, bool useful) = 0;
     virtual void impl_replacement_cache_fill(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip,
-                                             champsim::address victim_addr, access_type type) = 0;
+                                             champsim::address victim_addr, access_type type, bool useful) = 0;
     virtual void impl_replacement_final_stats() = 0;
     virtual void impl_replacement_update_prefetcher_stats(bool useful) = 0;
   };
@@ -311,9 +311,9 @@ public:
     [[nodiscard]] long impl_find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const BLOCK* current_set, champsim::address ip,
                                         champsim::address full_addr, access_type type) final;
     void impl_update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip,
-                                       champsim::address victim_addr, access_type type, bool hit) final;
+                                       champsim::address victim_addr, access_type type, bool hit, bool useful) final;
     void impl_replacement_cache_fill(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip,
-                                     champsim::address victim_addr, access_type type) final;
+                                     champsim::address victim_addr, access_type type, bool useful) final;
     void impl_replacement_final_stats() final;
     void impl_replacement_update_prefetcher_stats(bool useful) final;
   };
@@ -337,9 +337,9 @@ public:
   [[nodiscard]] long impl_find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const BLOCK* current_set, champsim::address ip,
                                       champsim::address full_addr, access_type type) const;
   void impl_update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip,
-                                     champsim::address victim_addr, access_type type, bool hit) const;
+                                     champsim::address victim_addr, access_type type, bool hit, bool useful) const;
   void impl_replacement_cache_fill(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip,
-                                   champsim::address victim_addr, access_type type) const;
+                                   champsim::address victim_addr, access_type type, bool useful) const;
   void impl_replacement_final_stats() const;
   void impl_replacement_update_prefetcher_stats(bool useful) const;
   // NOLINTEND(readability-make-member-function-const)
@@ -526,7 +526,7 @@ long CACHE::replacement_module_model<Rs...>::impl_find_victim(uint32_t triggerin
 
 template <typename... Rs>
 void CACHE::replacement_module_model<Rs...>::impl_update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr,
-                                                                           champsim::address ip, champsim::address victim_addr, access_type type, bool hit)
+                                                                           champsim::address ip, champsim::address victim_addr, access_type type, bool hit, bool useful)
 {
   [[maybe_unused]] auto process_one = [&](auto& r) {
     using namespace champsim::modules;
@@ -537,6 +537,11 @@ void CACHE::replacement_module_model<Rs...>::impl_update_replacement_state(uint3
       /* Strong addresses */
       if constexpr (replacement::has_update_state<decltype(r), uint32_t, long, long, champsim::address, champsim::address, access_type, bool>)
         r.update_replacement_state(triggering_cpu, set, way, full_addr, ip, type, hit);
+
+      /* Strong addresses */
+      else if constexpr (replacement::has_update_state<decltype(r), uint32_t, long, long, champsim::address, champsim::address, champsim::address, access_type,
+                                                       bool, bool>)
+        r.update_replacement_state(triggering_cpu, set, way, full_addr, ip, new_victim_addr, type, hit, useful);
 
       /* Strong addresses */
       else if constexpr (replacement::has_update_state<decltype(r), uint32_t, long, long, champsim::address, champsim::address, champsim::address, access_type,
@@ -561,7 +566,7 @@ void CACHE::replacement_module_model<Rs...>::impl_update_replacement_state(uint3
 
 template <typename... Rs>
 void CACHE::replacement_module_model<Rs...>::impl_replacement_cache_fill(uint32_t triggering_cpu, long set, long way, champsim::address full_addr,
-                                                                         champsim::address ip, champsim::address victim_addr, access_type type)
+                                                                         champsim::address ip, champsim::address victim_addr, access_type type, bool useful)
 {
   [[maybe_unused]] auto process_one = [&](auto& r) {
     using namespace champsim::modules;
@@ -575,6 +580,11 @@ void CACHE::replacement_module_model<Rs...>::impl_replacement_cache_fill(uint32_
       /* Strong addresses */
       if constexpr (replacement::has_update_state<decltype(r), uint32_t, long, long, champsim::address, champsim::address, access_type, bool>)
         r.update_replacement_state(triggering_cpu, set, way, full_addr, ip, type, 0);
+
+      /* Strong addresses */
+      else if constexpr (replacement::has_update_state<decltype(r), uint32_t, long, long, champsim::address, champsim::address, champsim::address, access_type,
+                                                      bool, bool>)
+        r.update_replacement_state(triggering_cpu, set, way, full_addr, ip, victim_addr, type, 0, useful);
 
       /* Strong addresses */
       else if constexpr (replacement::has_update_state<decltype(r), uint32_t, long, long, champsim::address, champsim::address, champsim::address, access_type,

@@ -1,16 +1,16 @@
 #include <cmath>
 
 #include "champsim.h"
-#include "mockingjay.h"
+#include "mockingjay_split_2.h"
 
-bool mockingjay::is_sampled_set(long set)
+bool mockingjay_split_2::is_sampled_set(long set)
 {
   long mask_length = LOG2_LLC_SET - LOG2_SAMPLED_SETS;
   long mask = (1 << mask_length) - 1;
   return (set & mask) == ((set >> (LOG2_LLC_SET - mask_length)) & mask);
 }
 
-uint64_t mockingjay::CRC_HASH(uint64_t _blockAddress)
+uint64_t mockingjay_split_2::CRC_HASH(uint64_t _blockAddress)
 {
   static const unsigned long long crcPolynomial = 3988292384ULL;
   unsigned long long _returnVal = _blockAddress;
@@ -19,57 +19,71 @@ uint64_t mockingjay::CRC_HASH(uint64_t _blockAddress)
   return _returnVal;
 }
 
-uint64_t mockingjay::build_signature(champsim::address ip, uint8_t hit, bool prefetch, uint32_t core)
+uint64_t mockingjay_split_2::build_signature(uint32_t triggering_cpu, champsim::address ip, access_type type, uint8_t hit)
 {
   uint64_t signature;
-  if (NUM_CPUS == 1) {
-    signature = ip.to<uint64_t>() << 1;
-    
+  if (NUM_CPUS == 1) 
+  {
+    signature = ip.to<uint64_t>();
+
+    signature <<= 1;
     if(hit) signature = signature | 1;
-    signature = signature << 1;
     
-    if (prefetch) signature = signature | 1;                            
+    signature = signature << 2;
+    if (type == access_type::PREFETCH) signature |= 0b01;
+    if (type == access_type::METADATA_LOAD) signature |= 0b10;
+    if (type == access_type::METADATA_STORE) signature |= 0b11;
     
     signature = CRC_HASH(signature);
-    
     signature = (signature << (64 - PC_SIGNATURE_BITS)) >> (64 - PC_SIGNATURE_BITS);
-  } else {
-      signature = ip.to<uint64_t>() << 1;
-      if(prefetch) signature = signature | 1;
+  } 
+  else
+  {
+      signature = ip.to<uint64_t>();
+
+      signature <<= 1;
+      if(hit) signature = signature | 1;
+
       signature = signature << 2;
-      signature = signature | core;
+      if (type == access_type::PREFETCH) signature = signature | 0b01;
+      if (type == access_type::METADATA_LOAD) signature = signature | 0b10;
+      if (type == access_type::METADATA_STORE) signature = signature | 0b11;
+
+      signature = signature << 2;
+      signature = signature | triggering_cpu;
+
       signature = CRC_HASH(signature);
       signature = (signature << (64 - PC_SIGNATURE_BITS)) >> (64 - PC_SIGNATURE_BITS);
   }
   return signature;
 }
 
-uint64_t mockingjay::get_sampled_cache_index(uint64_t full_addr)
+uint64_t mockingjay_split_2::get_sampled_cache_index(uint64_t full_addr)
 {
   full_addr = full_addr >> LOG2_BLOCK_SIZE;
   full_addr = (full_addr << (64 - (LOG2_SAMPLED_CACHE_SETS + LOG2_LLC_SET))) >> (64 - (LOG2_SAMPLED_CACHE_SETS + LOG2_LLC_SET));
   return full_addr;
 }
 
-uint64_t mockingjay::get_sampled_cache_tag(uint64_t x)
+uint64_t mockingjay_split_2::get_sampled_cache_tag(uint64_t x)
 {
   x >>= LOG2_LLC_SET + LOG2_BLOCK_SIZE + LOG2_SAMPLED_CACHE_SETS;
   x = (x << (64 - SAMPLED_CACHE_TAG_BITS)) >> (64 - SAMPLED_CACHE_TAG_BITS);
   return x;
 }
 
-int mockingjay::search_sampled_cache(uint64_t blockAddress, uint32_t set)
+int mockingjay_split_2::search_sampled_cache(uint64_t blockAddress, bool metadata, uint32_t set)
 {
   SampledCacheLine* sampled_set = sampled_cache[set];
   for (int way = 0; way < SAMPLED_CACHE_WAYS; way++) {
-      if (sampled_set[way].valid && (sampled_set[way].tag == blockAddress)) {
+      if (sampled_set[way].valid && (sampled_set[way].tag == blockAddress) && (sampled_set[way].metadata == metadata)) {
           return way;
       }
   }
   return -1;
 }
 
-void mockingjay::detrain(uint32_t set, int way)
+void mockingjay_split_2::detrain(uint32_t set, int way)
 {
   SampledCacheLine temp = sampled_cache[set][way];
   if (!temp.valid) {
@@ -84,7 +98,7 @@ void mockingjay::detrain(uint32_t set, int way)
   sampled_cache[set][way].valid = false;
 }
 
-int mockingjay::temporal_difference(int init, int sample)
+int mockingjay_split_2::temporal_difference(int init, int sample)
 {
   if (sample > init) {
     int diff = sample - init;
@@ -101,14 +115,14 @@ int mockingjay::temporal_difference(int init, int sample)
   }
 }
 
-int mockingjay::increment_timestamp(int input)
+int mockingjay_split_2::increment_timestamp(int input)
 {
   input++;
   input = input % (1 << TIMESTAMP_BITS);
   return input;
 }
 
-int mockingjay::time_elapsed(int global, int local)
+int mockingjay_split_2::time_elapsed(int global, int local)
 {
    if (global >= local) {
       return global - local;
@@ -117,12 +131,13 @@ int mockingjay::time_elapsed(int global, int local)
     return global - local;
 }
 
-mockingjay::mockingjay(CACHE* cache) : mockingjay(cache, cache->NUM_SET, cache->NUM_WAY) {}
+mockingjay_split_2::mockingjay_split_2(CACHE* cache) : mockingjay_split_2(cache, cache->NUM_SET, cache->NUM_WAY) {}
 
-mockingjay::mockingjay(CACHE* cache, long sets, long ways) 
+mockingjay_split_2::mockingjay_split_2(CACHE* cache, long sets, long ways) 
                     : replacement(cache),
                       NUM_SET(sets),
                       NUM_WAY(ways),
+                      METADATA_WAYS(2),
                       LOG2_LLC_SET(std::log2(NUM_SET)),
                       LOG2_LLC_SIZE(LOG2_LLC_SET + std::log2(NUM_WAY) + LOG2_BLOCK_SIZE),
                       LOG2_SAMPLED_SETS(LOG2_LLC_SIZE - 16),
@@ -154,11 +169,24 @@ mockingjay::mockingjay(CACHE* cache, long sets, long ways)
   }
 }
 
-long mockingjay::find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const champsim::cache_block* current_set, champsim::address ip, champsim::address full_addr, access_type type)
+long mockingjay_split_2::find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const champsim::cache_block* current_set, champsim::address ip, champsim::address full_addr, access_type type)
 {
-  for (uint32_t way = 0; way < NUM_WAY; way++) {
+  uint32_t min_way;
+  uint32_t max_way;
+
+  if (type == access_type::METADATA_LOAD || type == access_type::METADATA_STORE)
+  {
+    min_way = 0;
+    max_way = METADATA_WAYS;
+  }
+  else
+  {
+    min_way = METADATA_WAYS;
+    max_way = NUM_WAY;
+  }
+
+  for (uint32_t way = min_way; way < max_way; way++) {
     if (current_set[way].valid == false) {
-      if (intern_->block[way].metadata) continue;
       return way;
     }
   }
@@ -166,9 +194,7 @@ long mockingjay::find_victim(uint32_t triggering_cpu, uint64_t instr_id, long se
   // your eviction policy goes here
   int max_etr = 0;
   int victim_way = 0;
-  for (uint32_t way = 0; way < NUM_WAY; way++) {
-    if (intern_->block[way].metadata) continue;
-
+  for (uint32_t way = min_way; way < max_way; way++) {
     if (abs(etr[set][way]) > max_etr ||
           (abs(etr[set][way]) == max_etr &&
             etr[set][way] < 0)) { //TECHNICALLY this logic is not correct. While this does prioritize negative values, it does prioritize negative values over other negative values.
@@ -177,7 +203,7 @@ long mockingjay::find_victim(uint32_t triggering_cpu, uint64_t instr_id, long se
     }
   }
   
-  uint64_t pc_signature = build_signature(ip, false, access_type{type} == access_type::PREFETCH, triggering_cpu);
+  uint64_t pc_signature = build_signature(triggering_cpu, ip, type, false);
   if (access_type{type} != access_type::WRITE && rdp.count(pc_signature) &&
           (rdp[pc_signature] > MAX_RD || rdp[pc_signature] / GRANULARITY > max_etr)) {
       return NUM_WAY;
@@ -186,21 +212,24 @@ long mockingjay::find_victim(uint32_t triggering_cpu, uint64_t instr_id, long se
   return victim_way;
 }
 
-void mockingjay::update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip, champsim::address victim_addr, access_type type, uint8_t hit)
+void mockingjay_split_2::update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip, champsim::address victim_addr, access_type type, uint8_t hit)
 {
   if (type == access_type::WRITE)
   {
     if(!hit) etr[set][way] = -1 * INF_ETR;
     return;
   }
+
+  if (type == access_type::METADATA_LOAD && !hit) return;
   
-  uint64_t signature = build_signature(ip, hit, type == access_type::PREFETCH, triggering_cpu);
+  uint64_t signature = build_signature(triggering_cpu, ip, type, hit);
+  const bool metadata_access = (type == access_type::METADATA_STORE) || (type == access_type::METADATA_LOAD);
 
   if (is_sampled_set(set))
   {
     uint64_t sampled_cache_index = get_sampled_cache_index(full_addr.to<uint64_t>());
     uint64_t sampled_cache_tag = get_sampled_cache_tag(full_addr.to<uint64_t>());
-    int sampled_cache_way = search_sampled_cache(sampled_cache_tag, sampled_cache_index);
+    int sampled_cache_way = search_sampled_cache(sampled_cache_tag, metadata_access, sampled_cache_index);
 
     if (sampled_cache_way > -1) {
       uint64_t last_signature = sampled_cache[sampled_cache_index][sampled_cache_way].signature;
@@ -208,9 +237,9 @@ void mockingjay::update_replacement_state(uint32_t triggering_cpu, long set, lon
       int sample = time_elapsed(current_timestamp[set], last_timestamp);
 
       if (sample <= INF_RD) {
-        if (type == access_type::PREFETCH) {
-          sample = sample * FLEXMIN_PENALTY;
-        }
+        if (type == access_type::PREFETCH) sample = sample * FLEXMIN_PENALTY;
+        else if (type == access_type::METADATA_STORE) sample = 2 * INF_RD;
+        
         if (rdp.count(last_signature)) {
           int init = rdp[last_signature];
           rdp[last_signature] = temporal_difference(init, sample);
@@ -250,12 +279,13 @@ void mockingjay::update_replacement_state(uint32_t triggering_cpu, long set, lon
         sampled_cache[sampled_cache_index][w].valid = true;
         sampled_cache[sampled_cache_index][w].signature = signature;
         sampled_cache[sampled_cache_index][w].tag = sampled_cache_tag;
+        sampled_cache[sampled_cache_index][w].metadata = metadata_access;
         sampled_cache[sampled_cache_index][w].timestamp = current_timestamp[set];
         break;
       }
     }
     
-    current_timestamp[set] = increment_timestamp(current_timestamp[set]);
+    if ( !metadata_access ) current_timestamp[set] = increment_timestamp(current_timestamp[set]);
   }
 
   if(etr_clock[set] == GRANULARITY) {
@@ -266,7 +296,7 @@ void mockingjay::update_replacement_state(uint32_t triggering_cpu, long set, lon
       }
       etr_clock[set] = 0;
   }
-  etr_clock[set]++;
+  if ( !metadata_access) etr_clock[set]++;
   
   
   if (way < NUM_WAY) {

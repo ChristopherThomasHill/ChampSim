@@ -83,7 +83,7 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
   auto uniq_end = std::unique(std::begin(cpus), std::end(cpus));
   cpus.erase(uniq_end, std::end(cpus));
 
-  for (const auto type : {access_type::LOAD, access_type::RFO, access_type::PREFETCH, access_type::WRITE, access_type::TRANSLATION}) {
+  for (const auto type : {access_type::LOAD, access_type::RFO, access_type::PREFETCH, access_type::WRITE, access_type::TRANSLATION, access_type::METADATA_LOAD, access_type::METADATA_STORE}) {
     for (auto cpu : cpus) {
       stats.hits.allocate(std::pair{type, cpu});
       stats.misses.allocate(std::pair{type, cpu});
@@ -98,7 +98,7 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
     misses_value_type total_misses = 0;
     mshr_merge_value_type total_mshr_merge = 0;
     mshr_return_value_type total_mshr_return = 0;
-    for (const auto type : {access_type::LOAD, access_type::RFO, access_type::PREFETCH, access_type::WRITE, access_type::TRANSLATION}) {
+    for (const auto type : {access_type::LOAD, access_type::RFO, access_type::PREFETCH, access_type::WRITE, access_type::TRANSLATION, access_type::METADATA_LOAD, access_type::METADATA_STORE}) {
       total_hits += stats.hits.value_or(std::pair{type, cpu}, hits_value_type{});
       total_misses += stats.misses.value_or(std::pair{type, cpu}, misses_value_type{});
       total_mshr_merge += stats.mshr_merge.value_or(std::pair{type, cpu}, mshr_merge_value_type{});
@@ -108,7 +108,7 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
     fmt::format_string<std::string_view, std::string_view, int, int, int> hitmiss_fmtstr{
         "cpu{}->{} {:<12s} ACCESS: {:10d} HIT: {:10d} MISS: {:10d} MSHR_MERGE: {:10d}"};
     lines.push_back(fmt::format(hitmiss_fmtstr, cpu, stats.name, "TOTAL", total_hits + total_misses, total_hits, total_misses, total_mshr_merge));
-    for (const auto type : {access_type::LOAD, access_type::RFO, access_type::PREFETCH, access_type::WRITE, access_type::TRANSLATION}) {
+    for (const auto type : {access_type::LOAD, access_type::RFO, access_type::PREFETCH, access_type::WRITE, access_type::TRANSLATION, access_type::METADATA_LOAD, access_type::METADATA_STORE}) {
       lines.push_back(
           fmt::format(hitmiss_fmtstr, cpu, stats.name, access_type_names.at(champsim::to_underlying(type)),
                       stats.hits.value_or(std::pair{type, cpu}, hits_value_type{}) + stats.misses.value_or(std::pair{type, cpu}, misses_value_type{}),

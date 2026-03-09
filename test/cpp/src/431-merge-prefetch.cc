@@ -24,6 +24,7 @@ struct merge_testbed {
     typename MRP::request_type pkt;
     pkt.address = champsim::address{0xdeadbeef};
     pkt.v_address = champsim::address{0xdeadbeef};
+    pkt.metadata = false;
     pkt.type = type;
     pkt.instr_id = pkt_id++;
     pkt.cpu = 0;
@@ -114,7 +115,7 @@ SCENARIO("A prefetch MSHR that gets hit is promoted")
 
       AND_WHEN("The MSHR is closed")
       {
-        champsim::channel::response_type response{testbed.uut.MSHR.front().address, testbed.uut.MSHR.front().v_address,
+        champsim::channel::response_type response{testbed.uut.MSHR.front().address, testbed.uut.MSHR.front().v_address, false,
                                                   testbed.uut.MSHR.front().data_promise->data, 0, testbed.uut.MSHR.front().instr_depend_on_me};
 
         testbed.uut.lower_level->returned.push_back(response);

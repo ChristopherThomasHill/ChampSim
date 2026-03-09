@@ -1,5 +1,5 @@
-#ifndef PREFETCHER_CMC_MODIFIED_H
-#define PREFETCHER_CMC_MODIFIED_H
+#ifndef PREFETCHER_CMC_REVISION_2_H
+#define PREFETCHER_CMC_REVISION_2_H
 
 #include <cstdint>
 #include <deque>
@@ -9,7 +9,7 @@
 #include "metadata.h"
 #include "modules.h"
 
-class cmc_modified : public champsim::modules::prefetcher
+class cmc_revision_2 : public champsim::modules::prefetcher
 {
   using prefetcher::prefetcher;
 
@@ -72,7 +72,7 @@ class cmc_modified : public champsim::modules::prefetcher
     }
 
     CMCRequest(request_type _type, champsim::address _pc, champsim::block_number _block_addr, std::vector<champsim::block_number> _entries)
-        : type(_type), pc(_pc), block_addr(_block_addr), covered(false), entries(_entries)
+        : type(_type), pc(_pc), block_addr(_block_addr), entries(_entries)
     {
     }
   };
