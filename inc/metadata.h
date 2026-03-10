@@ -7,8 +7,6 @@ namespace champsim
 {
 struct MetadataRequest {
   virtual ~MetadataRequest() = default;
-
-  virtual bool useful() { return true; };
 }; // overwritten by metadata requests
 struct MetadataBlk {
   virtual ~MetadataBlk() = default;

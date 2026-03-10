@@ -225,11 +225,10 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
   auto metadata_thru = impl_prefetcher_cache_fill(module_address(fill_mshr), get_set_index(fill_mshr.address), way_idx,
                                                   (fill_mshr.type == access_type::PREFETCH), evicting_address, fill_mshr.data_promise->pf_metadata);
   impl_replacement_cache_fill(fill_mshr.cpu, get_set_index(fill_mshr.address), way_idx, module_address(fill_mshr), fill_mshr.ip, evicting_address,
-                              fill_mshr.type, true /*useful*/);
+                              fill_mshr.type, fill_mshr.prefetch_from_this);
 
   if (way != set_end) {
     if (way->valid && way->prefetch) {
-      impl_replacement_update_prefetcher_stats(false);
       ++sim_stats.pf_useless;
     }
 
@@ -331,10 +330,8 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 
   // update replacement policy
   const auto way_idx = std::distance(set_begin, way);
-  bool metadata_access = (handle_pkt.type == access_type::METADATA_STORE || handle_pkt.type == access_type::METADATA_LOAD);
-  bool useful = metadata_access ? handle_pkt.metadata_request->useful() : true;
   impl_update_replacement_state(handle_pkt.cpu, get_set_index(handle_pkt.address), way_idx, module_address(handle_pkt), handle_pkt.ip, {}, handle_pkt.type,
-                                hit, useful);
+                                hit, handle_pkt.prefetch_from_this);
 
   if (handle_pkt.metadata) {
     std::shared_ptr<champsim::MetadataBlk> metadata_blk = hit ? way->metadata_blk : nullptr;
@@ -356,7 +353,6 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 
     // update prefetch stats and reset prefetch bit
     if (useful_prefetch) {
-      impl_replacement_update_prefetcher_stats(true);
       ++sim_stats.pf_useful;
       way->prefetch = false;
     }
@@ -418,9 +414,8 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
 
     sim_stats.misses.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
 
-    bool useful = handle_pkt.metadata_request->useful();
     impl_replacement_cache_fill(handle_pkt.cpu, get_set_index(handle_pkt.address), NUM_WAY, handle_pkt.address, handle_pkt.ip,
-                                          champsim::address{}, handle_pkt.type, useful);
+                                          champsim::address{}, handle_pkt.type, handle_pkt.prefetch_from_this);
 
     return true;
   }
@@ -445,7 +440,6 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
     if (mshr_entry->type == access_type::PREFETCH && handle_pkt.type != access_type::PREFETCH) {
       // Mark the prefetch as useful
       if (mshr_entry->prefetch_from_this) {
-        impl_replacement_update_prefetcher_stats(true);
         ++sim_stats.pf_useful;
       }
     }
@@ -1083,20 +1077,18 @@ long CACHE::impl_find_victim(uint32_t triggering_cpu, uint64_t instr_id, long se
 }
 
 void CACHE::impl_update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip,
-                                          champsim::address victim_addr, access_type type, bool hit, bool useful) const
+                                          champsim::address victim_addr, access_type type, bool hit, bool local_pref) const
 {
-  repl_module_pimpl->impl_update_replacement_state(triggering_cpu, set, way, full_addr, ip, victim_addr, type, hit, useful);
+  repl_module_pimpl->impl_update_replacement_state(triggering_cpu, set, way, full_addr, ip, victim_addr, type, hit, local_pref);
 }
 
 void CACHE::impl_replacement_cache_fill(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip,
-                                        champsim::address victim_addr, access_type type, bool useful) const
+                                        champsim::address victim_addr, access_type type, bool local_pref) const
 {
-  repl_module_pimpl->impl_replacement_cache_fill(triggering_cpu, set, way, full_addr, ip, victim_addr, type, useful);
+  repl_module_pimpl->impl_replacement_cache_fill(triggering_cpu, set, way, full_addr, ip, victim_addr, type, local_pref);
 }
 
 void CACHE::impl_replacement_final_stats() const { repl_module_pimpl->impl_replacement_final_stats(); }
-
-void CACHE::impl_replacement_update_prefetcher_stats(bool useful) const { repl_module_pimpl->impl_replacement_update_prefetcher_stats(useful); }
 
 void CACHE::initialize()
 {
