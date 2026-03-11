@@ -224,8 +224,9 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
 
   auto metadata_thru = impl_prefetcher_cache_fill(module_address(fill_mshr), get_set_index(fill_mshr.address), way_idx,
                                                   (fill_mshr.type == access_type::PREFETCH), evicting_address, fill_mshr.data_promise->pf_metadata);
+  auto meta_request = (fill_mshr.type == access_type::METADATA_LOAD || fill_mshr.type == access_type::METADATA_STORE) ? fill_mshr.metadata_request : nullptr;
   impl_replacement_cache_fill(fill_mshr.cpu, get_set_index(fill_mshr.address), way_idx, module_address(fill_mshr), fill_mshr.ip, evicting_address,
-                              fill_mshr.type, fill_mshr.prefetch_from_this);
+                              fill_mshr.type, meta_request, fill_mshr.prefetch_from_this);
 
   if (way != set_end) {
     if (way->valid && way->prefetch) {
@@ -330,8 +331,9 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 
   // update replacement policy
   const auto way_idx = std::distance(set_begin, way);
+  auto meta_request = (handle_pkt.type == access_type::METADATA_LOAD || handle_pkt.type == access_type::METADATA_STORE) ? handle_pkt.metadata_request : nullptr;
   impl_update_replacement_state(handle_pkt.cpu, get_set_index(handle_pkt.address), way_idx, module_address(handle_pkt), handle_pkt.ip, {}, handle_pkt.type,
-                                hit, handle_pkt.prefetch_from_this);
+                                hit, meta_request, handle_pkt.prefetch_from_this);
 
   if (handle_pkt.metadata) {
     std::shared_ptr<champsim::MetadataBlk> metadata_blk = hit ? way->metadata_blk : nullptr;
@@ -414,8 +416,9 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
 
     sim_stats.misses.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
 
+    auto meta_request = (handle_pkt.type == access_type::METADATA_LOAD || handle_pkt.type == access_type::METADATA_STORE) ? handle_pkt.metadata_request : nullptr;
     impl_replacement_cache_fill(handle_pkt.cpu, get_set_index(handle_pkt.address), NUM_WAY, handle_pkt.address, handle_pkt.ip,
-                                          champsim::address{}, handle_pkt.type, handle_pkt.prefetch_from_this);
+                                          champsim::address{}, handle_pkt.type, meta_request, handle_pkt.prefetch_from_this);
 
     return true;
   }
@@ -1068,6 +1071,11 @@ void CACHE::impl_prefetcher_metadata_request_update(const std::shared_ptr<champs
   pref_module_pimpl->impl_prefetcher_metadata_request_update(request, blk, hit);
 }
 
+void CACHE::impl_prefetcher_metadata_simulate_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk, std::vector<champsim::address>& prefetch_addresses, bool hit) const
+{
+  pref_module_pimpl->impl_prefetcher_metadata_simulate_update(request, blk, prefetch_addresses, hit);
+}
+
 void CACHE::impl_initialize_replacement() const { repl_module_pimpl->impl_initialize_replacement(); }
 
 long CACHE::impl_find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const BLOCK* current_set, champsim::address ip, champsim::address full_addr,
@@ -1077,15 +1085,15 @@ long CACHE::impl_find_victim(uint32_t triggering_cpu, uint64_t instr_id, long se
 }
 
 void CACHE::impl_update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip,
-                                          champsim::address victim_addr, access_type type, bool hit, bool local_pref) const
+                                          champsim::address victim_addr, access_type type, bool hit, const std::shared_ptr<champsim::MetadataRequest>& meta_request, bool local_pref) const
 {
-  repl_module_pimpl->impl_update_replacement_state(triggering_cpu, set, way, full_addr, ip, victim_addr, type, hit, local_pref);
+  repl_module_pimpl->impl_update_replacement_state(triggering_cpu, set, way, full_addr, ip, victim_addr, type, hit, meta_request, local_pref);
 }
 
 void CACHE::impl_replacement_cache_fill(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip,
-                                        champsim::address victim_addr, access_type type, bool local_pref) const
+                                        champsim::address victim_addr, access_type type, const std::shared_ptr<champsim::MetadataRequest>& meta_request, bool local_pref) const
 {
-  repl_module_pimpl->impl_replacement_cache_fill(triggering_cpu, set, way, full_addr, ip, victim_addr, type, local_pref);
+  repl_module_pimpl->impl_replacement_cache_fill(triggering_cpu, set, way, full_addr, ip, victim_addr, type, meta_request, local_pref);
 }
 
 void CACHE::impl_replacement_final_stats() const { repl_module_pimpl->impl_replacement_final_stats(); }

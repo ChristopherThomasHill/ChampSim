@@ -133,13 +133,14 @@ int mockingjay_weighted::time_elapsed(int global, int local)
 
 mockingjay_weighted::mockingjay_weighted(CACHE* cache) : mockingjay_weighted(cache, cache->NUM_SET, cache->NUM_WAY) {}
 
-mockingjay_weighted::mockingjay_weighted(CACHE* cache, long sets, long ways) 
-                    : replacement(cache),
+mockingjay_weighted::mockingjay_weighted(CACHE* _cache, long sets, long ways) 
+                    : replacement(_cache),
+                      cache(_cache),
                       NUM_SET(sets),
                       NUM_WAY(ways),
                       LOG2_LLC_SET(std::log2(NUM_SET)),
                       LOG2_LLC_SIZE(LOG2_LLC_SET + std::log2(NUM_WAY) + LOG2_BLOCK_SIZE),
-                      LOG2_SAMPLED_SETS(LOG2_LLC_SIZE - 16),
+                      LOG2_SAMPLED_SETS(LOG2_LLC_SIZE - 16 /*16*/),
                       HISTORY(8),
                       GRANULARITY(8),
                       INF_RD(NUM_WAY * HISTORY - 1),
@@ -154,7 +155,8 @@ mockingjay_weighted::mockingjay_weighted(CACHE* cache, long sets, long ways)
                       FLEXMIN_PENALTY(2.0 - std::log2(NUM_CPUS)/4.0),
                       recency_cache(2048 /*PREFETCH_ACCURACY_CACHE_SIZE*/),
                       METADATA_ELEMENT_COUNT(16),
-                      ACCURACY_TABLE_METADATA_LOAD_SAMPLE(512)
+                      ACCURACY_TABLE_METADATA_LOAD_SAMPLE(8),
+                      ACCURACY_TABLE_METADATA_DELAY(8)
 {
   etr = std::vector<std::vector<int>>(NUM_SET, std::vector<int>(NUM_WAY));
   etr_clock = std::vector<int>(NUM_SET, GRANULARITY);
@@ -200,54 +202,24 @@ long mockingjay_weighted::find_victim(uint32_t triggering_cpu, uint64_t instr_id
   return victim_way;
 }
 
-void mockingjay_weighted::update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip, champsim::address victim_addr, access_type type, uint8_t hit, bool local_pref)
+void mockingjay_weighted::update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip, champsim::address victim_addr, access_type type, uint8_t hit, const std::shared_ptr<champsim::MetadataRequest>& meta_request, bool local_pref)
 {
   if (type == access_type::WRITE)
   {
     if(!hit) etr[set][way] = -1 * INF_ETR;
     return;
   }
-
-  // Metadata load misses means no producer
-  if (type == access_type::METADATA_LOAD && !hit) return;
   
   if (type != access_type::METADATA_LOAD && type != access_type::METADATA_STORE)
   {
     champsim::block_number block_addr(full_addr);
     auto recency_entry = recency_cache.get(block_addr);
 
-    if (recency_entry && !local_pref && hit)
+    if (recency_entry && !local_pref)
     {
-      // Useful Prefetch
-      auto& info = accuracy_table[recency_entry->to<uint64_t>()];
+      auto& info = accuracy_table[*recency_entry];
       info.useful_prefetches += 1;
-
-      // printf("Useful Prefetch %lx %lx\n", block_addr.to<uint64_t>(), recency_entry->to<uint64_t>());
-    }
-
-    if (type == access_type::PREFETCH && local_pref && !hit)
-    {  
-      // Start Tracking This Prefetch
-      recency_cache.access(block_addr, ip);
-    
-      // printf("Prefetched %lx %lx\n", block_addr.to<uint64_t>(), ip.to<uint64_t>());
-    }
-  }
-  else if (type == access_type::METADATA_LOAD && hit)
-  {
-    auto& info = accuracy_table[ip.to<uint64_t>()];
-
-    champsim::block_number block_addr(full_addr);
-    // printf("Start Tracking %lx %lx\n", block_addr.to<uint64_t>(), ip.to<uint64_t>());
-
-    info.metadata_loads += 1;
-    if (info.metadata_loads >= ACCURACY_TABLE_METADATA_LOAD_SAMPLE)
-    {
-      info.accuracy = static_cast<double>(info.useful_prefetches) / info.metadata_loads;
-      info.metadata_loads = 0;
-      info.useful_prefetches = 0;
-
-      printf("IP:%lx Accuracy:%f\n", ip.to<uint64_t>(), info.accuracy);
+      recency_cache.invalidate(block_addr);
     }
   }
 
@@ -280,41 +252,116 @@ void mockingjay_weighted::update_replacement_state(uint32_t triggering_cpu, long
       }
     }
 
+    int victim_way = sampled_cache_way;
+    bool sampled_cache_hit = victim_way > -1;
 
-    int lru_way = -1;
-    int lru_rd = -1;
-    for (int w = 0; w < SAMPLED_CACHE_WAYS; w++) {
-      if (sampled_cache[sampled_cache_index][w].valid == false) {
-        lru_way = w;
-        lru_rd = INF_RD + 1;
-        continue;
+    champsim::block_number print_addr(full_addr);
+    if (type == access_type::METADATA_LOAD) printf("Metadata Load %lx\n", print_addr.to<uint64_t>());
+    else if (type == access_type::METADATA_STORE) printf("Metadata Store %lx\n", print_addr.to<uint64_t>());
+
+    if (type != access_type::METADATA_LOAD || sampled_cache_hit) 
+    {
+      int lru_way = -1;
+      int lru_rd = -1;
+      for (int w = 0; w < SAMPLED_CACHE_WAYS; w++) {
+        if (sampled_cache[sampled_cache_index][w].valid == false) {
+          lru_way = w;
+          lru_rd = INF_RD + 1;
+          continue;
+        }
+
+        uint64_t last_timestamp = sampled_cache[sampled_cache_index][w].timestamp;
+        int sample = time_elapsed(current_timestamp[set], last_timestamp);
+        if (sample > INF_RD) {
+          lru_way = w;
+          lru_rd = INF_RD + 1;
+          detrain(sampled_cache_index, w);
+        } else if (sample > lru_rd) {
+          lru_way = w;
+          lru_rd = sample;
+        }
+      }
+      detrain(sampled_cache_index, lru_way);
+
+      uint64_t previous_signature = 0;
+
+      if (!sampled_cache_hit)
+      {
+        for (int w = 0; w < SAMPLED_CACHE_WAYS; w++)
+        {
+          if (sampled_cache[sampled_cache_index][w].valid == false)
+          {
+            victim_way = w;
+            break;
+          }
+        }
+      }
+      else
+      {
+        previous_signature = sampled_cache[sampled_cache_index][victim_way].signature;
       }
 
-      uint64_t last_timestamp = sampled_cache[sampled_cache_index][w].timestamp;
-      int sample = time_elapsed(current_timestamp[set], last_timestamp);
-      if (sample > INF_RD) {
-        lru_way = w;
-        lru_rd = INF_RD + 1;
-        detrain(sampled_cache_index, w);
-      } else if (sample > lru_rd) {
-        lru_way = w;
-        lru_rd = sample;
+      assert(victim_way > -1);
+
+      sampled_cache[sampled_cache_index][victim_way].valid = true;
+      sampled_cache[sampled_cache_index][victim_way].signature = signature;
+      sampled_cache[sampled_cache_index][victim_way].tag = sampled_cache_tag;
+      sampled_cache[sampled_cache_index][victim_way].metadata = metadata_access;
+      sampled_cache[sampled_cache_index][victim_way].timestamp = current_timestamp[set];
+
+      if ( metadata_access )
+      {
+        if ( type == access_type::METADATA_STORE )
+        {
+          cache->impl_prefetcher_metadata_request_fill(meta_request, sampled_cache[sampled_cache_index][victim_way].metadata_blk);
+        }
+        else if ( sampled_cache[sampled_cache_index][victim_way].metadata_blk != nullptr )
+        {
+          assert(sampled_cache_hit);
+
+          auto& info = accuracy_table[previous_signature];
+          info.metadata_loads += 1;
+          printf("Sampling %lx %u %u\n", previous_signature, info.metadata_loads, info.useful_prefetches);
+
+          if (info.metadata_loads < ACCURACY_TABLE_METADATA_LOAD_SAMPLE)
+          {
+            assert(type == access_type::METADATA_LOAD);
+            std::vector<champsim::address> prefetch_addresses = {};
+            cache->impl_prefetcher_metadata_simulate_update(meta_request, sampled_cache[sampled_cache_index][victim_way].metadata_blk, prefetch_addresses, sampled_cache_hit);
+
+            for (const auto& pref_addr : prefetch_addresses)
+            {
+              if ( !cache->in_cache(pref_addr, false /*metadata*/) )
+              {
+                champsim::block_number block_addr(pref_addr);
+                recency_cache.access(block_addr, previous_signature);
+              }
+            }
+          }
+          
+          if (info.metadata_loads >= ACCURACY_TABLE_METADATA_LOAD_SAMPLE + ACCURACY_TABLE_METADATA_DELAY)
+          {
+            info.accuracy = static_cast<double>(info.useful_prefetches) / info.metadata_loads;
+            info.metadata_loads = 0;
+            info.useful_prefetches = 0;
+
+            printf("Signature:%lx Accuracy:%f\n", previous_signature, info.accuracy);
+          }
+        }
       }
+      else
+      {
+        sampled_cache[sampled_cache_index][victim_way].metadata_blk = nullptr;
+      }
+      
+      if ( !metadata_access ) current_timestamp[set] = increment_timestamp(current_timestamp[set]);
     }
-    detrain(sampled_cache_index, lru_way);
+  }
 
-    for (int w = 0; w < SAMPLED_CACHE_WAYS; w++) {
-      if (sampled_cache[sampled_cache_index][w].valid == false) {
-        sampled_cache[sampled_cache_index][w].valid = true;
-        sampled_cache[sampled_cache_index][w].signature = signature;
-        sampled_cache[sampled_cache_index][w].tag = sampled_cache_tag;
-        sampled_cache[sampled_cache_index][w].metadata = metadata_access;
-        sampled_cache[sampled_cache_index][w].timestamp = current_timestamp[set];
-        break;
-      }
-    }
-    
-    if ( !metadata_access ) current_timestamp[set] = increment_timestamp(current_timestamp[set]);
+  if (type == access_type::METADATA_LOAD && !hit) 
+  {
+    assert(way == NUM_WAY);
+    return;
   }
 
   if(etr_clock[set] == GRANULARITY) {

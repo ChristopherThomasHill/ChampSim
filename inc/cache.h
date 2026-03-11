@@ -255,6 +255,7 @@ public:
 
     virtual void impl_prefetcher_metadata_request_fill(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk) = 0;
     virtual void impl_prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk, bool hit) = 0;
+    virtual void impl_prefetcher_metadata_simulate_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk, std::vector<champsim::address>& prefetch_addresses, bool hit) = 0;
   };
 
   struct replacement_module_concept {
@@ -266,9 +267,9 @@ public:
     virtual long impl_find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const BLOCK* current_set, champsim::address ip,
                                   champsim::address full_addr, access_type type) = 0;
     virtual void impl_update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip,
-                                               champsim::address victim_addr, access_type type, bool hit, bool local_pref) = 0;
+                                               champsim::address victim_addr, access_type type, bool hit, const std::shared_ptr<champsim::MetadataRequest>& meta_request, bool local_pref) = 0;
     virtual void impl_replacement_cache_fill(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip,
-                                             champsim::address victim_addr, access_type type, bool local_pref) = 0;
+                                             champsim::address victim_addr, access_type type, const std::shared_ptr<champsim::MetadataRequest>& meta_request, bool local_pref) = 0;
     virtual void impl_replacement_final_stats() = 0;
   };
 
@@ -292,6 +293,7 @@ public:
 
     void impl_prefetcher_metadata_request_fill(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk) final;
     void impl_prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk, bool hit) final;
+    void impl_prefetcher_metadata_simulate_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk, std::vector<champsim::address>& prefetch_addresses, bool hit) final;
   };
 
   template <typename... Rs>
@@ -310,9 +312,9 @@ public:
     [[nodiscard]] long impl_find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const BLOCK* current_set, champsim::address ip,
                                         champsim::address full_addr, access_type type) final;
     void impl_update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip,
-                                       champsim::address victim_addr, access_type type, bool hit, bool local_pref) final;
+                                       champsim::address victim_addr, access_type type, bool hit, const std::shared_ptr<champsim::MetadataRequest>& meta_request, bool local_pref) final;
     void impl_replacement_cache_fill(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip,
-                                     champsim::address victim_addr, access_type type, bool local_pref) final;
+                                     champsim::address victim_addr, access_type type, const std::shared_ptr<champsim::MetadataRequest>& meta_request, bool local_pref) final;
     void impl_replacement_final_stats() final;
   };
 
@@ -330,14 +332,15 @@ public:
   void impl_prefetcher_branch_operate(champsim::address ip, uint8_t branch_type, champsim::address branch_target) const;
   void impl_prefetcher_metadata_request_fill(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk) const;
   void impl_prefetcher_metadata_request_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk, bool hit) const;
+  void impl_prefetcher_metadata_simulate_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk, std::vector<champsim::address>& prefetch_addresses, bool hit) const;
 
   void impl_initialize_replacement() const;
   [[nodiscard]] long impl_find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const BLOCK* current_set, champsim::address ip,
                                       champsim::address full_addr, access_type type) const;
   void impl_update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip,
-                                     champsim::address victim_addr, access_type type, bool hit, bool local_pref) const;
+                                     champsim::address victim_addr, access_type type, bool hit, const std::shared_ptr<champsim::MetadataRequest>& meta_request, bool local_pref) const;
   void impl_replacement_cache_fill(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip,
-                                   champsim::address victim_addr, access_type type, bool local_pref) const;
+                                   champsim::address victim_addr, access_type type, const std::shared_ptr<champsim::MetadataRequest>& meta_request, bool local_pref) const;
   void impl_replacement_final_stats() const;
   // NOLINTEND(readability-make-member-function-const)
 
@@ -479,6 +482,20 @@ void CACHE::prefetcher_module_model<Ps...>::impl_prefetcher_metadata_request_upd
   std::apply([&](auto&... p) { (..., process_one(p)); }, intern_);
 }
 
+template <typename... Ps>
+void CACHE::prefetcher_module_model<Ps...>::impl_prefetcher_metadata_simulate_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk, std::vector<champsim::address>& prefetch_addresses, bool hit)
+{
+  [[maybe_unused]] auto process_one = [&](auto& p) {
+    using namespace champsim::modules;
+    if constexpr (prefetcher::metadata_simulate_update<decltype(p), const std::shared_ptr<champsim::MetadataRequest>&, std::shared_ptr<champsim::MetadataBlk>&, std::vector<champsim::address>&, bool>)
+    {
+      p.prefetcher_metadata_simulate_update(request, blk, prefetch_addresses, hit);
+    }
+  };
+
+  std::apply([&](auto&... p) { (..., process_one(p)); }, intern_);
+}
+
 template <typename... Rs>
 void CACHE::replacement_module_model<Rs...>::impl_initialize_replacement()
 {
@@ -523,7 +540,7 @@ long CACHE::replacement_module_model<Rs...>::impl_find_victim(uint32_t triggerin
 
 template <typename... Rs>
 void CACHE::replacement_module_model<Rs...>::impl_update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr,
-                                                                           champsim::address ip, champsim::address victim_addr, access_type type, bool hit, bool local_pref)
+                                                                           champsim::address ip, champsim::address victim_addr, access_type type, bool hit, const std::shared_ptr<champsim::MetadataRequest>& meta_request, bool local_pref)
 {
   [[maybe_unused]] auto process_one = [&](auto& r) {
     using namespace champsim::modules;
@@ -534,6 +551,11 @@ void CACHE::replacement_module_model<Rs...>::impl_update_replacement_state(uint3
       /* Strong addresses */
       if constexpr (replacement::has_update_state<decltype(r), uint32_t, long, long, champsim::address, champsim::address, access_type, bool>)
         r.update_replacement_state(triggering_cpu, set, way, full_addr, ip, type, hit);
+
+      /* Strong addresses */
+      else if constexpr (replacement::has_update_state<decltype(r), uint32_t, long, long, champsim::address, champsim::address, champsim::address, access_type,
+                                                       bool, const std::shared_ptr<champsim::MetadataRequest>&, bool>)
+        r.update_replacement_state(triggering_cpu, set, way, full_addr, ip, new_victim_addr, type, hit, meta_request, local_pref);
 
       /* Strong addresses */
       else if constexpr (replacement::has_update_state<decltype(r), uint32_t, long, long, champsim::address, champsim::address, champsim::address, access_type,
@@ -563,7 +585,7 @@ void CACHE::replacement_module_model<Rs...>::impl_update_replacement_state(uint3
 
 template <typename... Rs>
 void CACHE::replacement_module_model<Rs...>::impl_replacement_cache_fill(uint32_t triggering_cpu, long set, long way, champsim::address full_addr,
-                                                                         champsim::address ip, champsim::address victim_addr, access_type type, bool local_pref)
+                                                                         champsim::address ip, champsim::address victim_addr, access_type type, const std::shared_ptr<champsim::MetadataRequest>& meta_request, bool local_pref)
 {
   [[maybe_unused]] auto process_one = [&](auto& r) {
     using namespace champsim::modules;
@@ -577,6 +599,11 @@ void CACHE::replacement_module_model<Rs...>::impl_replacement_cache_fill(uint32_
       /* Strong addresses */
       if constexpr (replacement::has_update_state<decltype(r), uint32_t, long, long, champsim::address, champsim::address, access_type, bool>)
         r.update_replacement_state(triggering_cpu, set, way, full_addr, ip, type, 0);
+
+      /* Strong addresses */
+      else if constexpr (replacement::has_update_state<decltype(r), uint32_t, long, long, champsim::address, champsim::address, champsim::address, access_type,
+                                                      bool, const std::shared_ptr<champsim::MetadataRequest>&, bool>)
+        r.update_replacement_state(triggering_cpu, set, way, full_addr, ip, victim_addr, type, 0, meta_request, local_pref);
 
       /* Strong addresses */
       else if constexpr (replacement::has_update_state<decltype(r), uint32_t, long, long, champsim::address, champsim::address, champsim::address, access_type,

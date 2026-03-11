@@ -8,6 +8,8 @@
 #include "modules.h"
 
 class mockingjay_weighted : public champsim::modules::replacement {
+  CACHE* cache = nullptr;
+  
   const long NUM_SET;
   const long NUM_WAY;
   
@@ -33,6 +35,7 @@ class mockingjay_weighted : public champsim::modules::replacement {
 
   const int METADATA_ELEMENT_COUNT;
   const uint32_t ACCURACY_TABLE_METADATA_LOAD_SAMPLE;
+  const uint32_t ACCURACY_TABLE_METADATA_DELAY;
   
   std::vector<std::vector<int>> etr;
   std::vector<int> etr_clock;
@@ -48,6 +51,8 @@ class mockingjay_weighted : public champsim::modules::replacement {
     bool metadata;
     uint64_t signature;
     int timestamp;
+
+    std::shared_ptr<champsim::MetadataBlk> metadata_blk = nullptr;
   };
   std::unordered_map<uint64_t, SampledCacheLine* > sampled_cache;
 
@@ -66,7 +71,7 @@ class mockingjay_weighted : public champsim::modules::replacement {
   {
   private:
     std::deque<uint64_t> order;
-    std::unordered_map<uint64_t, champsim::address> present;
+    std::unordered_map<uint64_t, uint64_t> present;
     std::size_t PREFETCH_ACCURACY_CACHE_SIZE;
 
   public:
@@ -74,7 +79,7 @@ class mockingjay_weighted : public champsim::modules::replacement {
     {
     }
 
-    void access(const champsim::block_number& key, const champsim::address& value)
+    void access(const champsim::block_number& key, const uint64_t& value)
     {
       if (order.size() == PREFETCH_ACCURACY_CACHE_SIZE)
       {
@@ -86,7 +91,7 @@ class mockingjay_weighted : public champsim::modules::replacement {
       present[key.to<uint64_t>()] = value;
     }
 
-    std::optional<champsim::address> get(const champsim::block_number& key) const
+    std::optional<uint64_t> get(const champsim::block_number& key) const
     {
       auto it = present.find(key.to<uint64_t>());
       if (it == present.end()) {
@@ -123,7 +128,7 @@ public:
   mockingjay_weighted(CACHE* cache, long sets, long ways);
 
   long find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const champsim::cache_block* current_set, champsim::address ip, champsim::address full_addr, access_type type);
-  void update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip, champsim::address victim_addr, access_type type, uint8_t hit, bool local_pref);
+  void update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip, champsim::address victim_addr, access_type type, uint8_t hit, const std::shared_ptr<champsim::MetadataRequest>& meta_request, bool local_pref);
 };
 
 #endif

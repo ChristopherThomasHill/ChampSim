@@ -121,3 +121,17 @@ void cmc_revision_1::prefetcher_metadata_request_update(const std::shared_ptr<ch
     }
   }
 }
+
+void cmc_revision_1::prefetcher_metadata_simulate_update(const std::shared_ptr<champsim::MetadataRequest>& request, std::shared_ptr<champsim::MetadataBlk>& blk, std::vector<champsim::address>& prefetch_addresses, bool hit)
+{
+  CMCRequest& cmc_request = *static_cast<CMCRequest*>(request.get());
+  assert(cmc_request.type == CMCRequest::request_type::LOAD);
+
+  if (hit)
+  {
+    assert(blk != nullptr);
+    CMCBlock& cmc_blk = *static_cast<CMCBlock*>(blk.get());
+    for (auto pf_block: cmc_blk.addresses)
+      prefetch_addresses.push_back(champsim::address(pf_block));
+  }
+}
