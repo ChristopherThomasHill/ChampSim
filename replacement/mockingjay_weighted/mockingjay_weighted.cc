@@ -102,6 +102,7 @@ void mockingjay_weighted::detrain(uint32_t set, int way, bool metadata)
   } else {
       rdp[temp.signature] = INF_RD;
   }
+  assert(rdp[temp.signature] <= INF_RD);
   sampled_cache[set][way].valid = false;
 }
 
@@ -289,8 +290,9 @@ void mockingjay_weighted::update_replacement_state(uint32_t triggering_cpu, long
           int init = rdp[last_signature];
           rdp[last_signature] = temporal_difference(init, sample);
         } else {
-          rdp[last_signature] = sample;
+          rdp[last_signature] = std::min(sample, INF_RD);
         }
+        assert(rdp[last_signature] <= INF_RD);
 
         sampled_cache[sampled_cache_index][sampled_cache_way].valid = false;
       }
@@ -433,7 +435,7 @@ void mockingjay_weighted::update_replacement_state(uint32_t triggering_cpu, long
     metadata_etr_clock[set]++;
     etr_clock[set]++;
   }
-  
+
   if (way < NUM_WAY) {
     int previous_etr = etr[set][way];
 
@@ -462,7 +464,7 @@ void mockingjay_weighted::ReuseProfiler::track_info(long set, champsim::address 
 {
   if (type == access_type::WRITE || type == access_type::TRANSLATION) return;
 
-  champsim::block_number block_num = champsim::block_number(full_addr);
+  champsim::block_number block_num(full_addr);
   const bool metadata_access = (type == access_type::METADATA_LOAD) || (type == access_type::METADATA_STORE);
 
   TrackerKey key{block_num, metadata_access};
@@ -472,7 +474,9 @@ void mockingjay_weighted::ReuseProfiler::track_info(long set, champsim::address 
     Signature previous_sig = std::get<2>(tracker[key]);
 
     if (type == access_type::METADATA_STORE)
+    {
       reuse_table[previous_sig].meta_store_after += 1;
+    }
     else
     {
       uint64_t reuse_distance = set_age[set] - std::get<0>(tracker[key]);
@@ -612,6 +616,11 @@ void mockingjay_weighted::MockingjayProfiler::record_bypass(champsim::address ip
 
 void mockingjay_weighted::MockingjayProfiler::record_update(long set, long way, champsim::address ip, champsim::address victim_addr, access_type type, bool hit, int insert_etr, int current_etr)
 {
+  assert((insert_etr <= INF_ETR && insert_etr >= 0) || type == access_type::WRITE);
+  assert(current_etr <= INF_ETR && current_etr >= -1 * INF_ETR);
+  assert(set >= 0 && set < last_signature.size());
+  assert(way >= 0 && way < last_signature[set].size());
+
   Signature sig = {ip, type, hit};
 
   if (type != access_type::WRITE && type != access_type::TRANSLATION)
@@ -621,8 +630,12 @@ void mockingjay_weighted::MockingjayProfiler::record_update(long set, long way, 
     insertion_etr_table[sig][insert_etr] += 1;
   }
 
+  bool had_last_sig = last_signature_valid[set][way];
   Signature last_sig = last_signature[set][way];
   last_signature[set][way] = sig;
+  last_signature_valid[set][way] = true;
+
+  if (!had_last_sig) return;
 
   if (last_sig.type == access_type::WRITE || last_sig.type == access_type::TRANSLATION) return; // Write/Translation
 

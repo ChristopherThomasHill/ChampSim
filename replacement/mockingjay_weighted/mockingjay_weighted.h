@@ -213,8 +213,8 @@ class mockingjay_weighted : public champsim::modules::replacement {
     struct Signature
     {
       champsim::address ip;
-      access_type type;
-      bool hit;
+      access_type type = access_type::WRITE;
+      bool hit = false;
 
       bool operator==(const Signature& other) const
       {
@@ -238,6 +238,7 @@ class mockingjay_weighted : public champsim::modules::replacement {
     };
 
     std::vector<std::vector<Signature>> last_signature;
+    std::vector<std::vector<bool>> last_signature_valid;
 
     std::unordered_map<Signature, uint64_t, SignatureKeyHash> bypass_table;
     std::unordered_map<Signature, std::vector<uint64_t>, SignatureKeyHash> insertion_etr_table;
@@ -250,7 +251,12 @@ class mockingjay_weighted : public champsim::modules::replacement {
     void record_update(long set, long way, champsim::address ip, champsim::address victim_addr, access_type type, bool hit, int insert_etr, int current_etr);
     void print_profiler();
 
-    explicit MockingjayProfiler(long num_sets, long num_ways, int inf_etr) : INF_ETR(inf_etr), last_signature(num_sets, std::vector<Signature>(num_ways)) {}
+    explicit MockingjayProfiler(long num_sets, long num_ways, int inf_etr)
+        : INF_ETR(inf_etr),
+          last_signature(num_sets, std::vector<Signature>(num_ways)),
+          last_signature_valid(num_sets, std::vector<bool>(num_ways, false))
+    {
+    }
   };
 
   MockingjayProfiler mockingjay_profiler;
