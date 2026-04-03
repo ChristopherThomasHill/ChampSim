@@ -42,12 +42,17 @@ class mockingjay_weight_adj : public champsim::modules::replacement {
   const int METADATA_ELEMENT_COUNT;
   const uint32_t ACCURACY_TABLE_METADATA_LOAD_SAMPLE;
   const uint32_t ACCURACY_TABLE_METADATA_DELAY;
+
+  const double METADATA_USELESS_THRESHOLD;
+  const uint64_t METADATA_NO_SIG = 0xdeadbeef;
   
   std::vector<std::vector<int>> etr;
+  std::vector<std::vector<uint64_t>> metadata_sig;
   std::vector<int> etr_clock;
   std::vector<int> metadata_etr_clock;
 
   std::unordered_map<uint64_t, int> rdp;
+  std::unordered_map<uint64_t, double> acp;
 
   std::vector<int> current_timestamp;
 
@@ -123,14 +128,12 @@ class mockingjay_weight_adj : public champsim::modules::replacement {
 
   struct AccuracyInfo
   {
-    double accuracy = -1.0;
     uint32_t metadata_loads = 0;
     uint32_t useful_prefetches = 0;
   };
 
   std::unordered_map<uint64_t /*signature*/, AccuracyInfo> accuracy_table;
 
-  std::vector<std::vector<int>> estimated_accuracy;
   double eviction_value(int estimated_tr, int estimated_ac, bool metadata_access);
 
   class ReuseProfiler

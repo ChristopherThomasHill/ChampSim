@@ -140,32 +140,6 @@ int mockingjay_weight_adj::time_elapsed(int global, int local)
   return global - local;
 }
 
-double mockingjay_weight_adj::eviction_value(int estimated_tr, int estimated_ac, bool metadata_access)
-{
-  if (!metadata_access)
-  {
-    if (estimated_tr >= 0)
-      return static_cast<double>(estimated_tr);
-    else
-      return static_cast<double>(abs(estimated_tr)) + 0.5;
-  }
-  else
-  {
-    double true_etr;
-
-    if (estimated_tr >= 0)
-      true_etr = static_cast<double>(estimated_tr * METADATA_RATIO);
-    else
-      true_etr = static_cast<double>(estimated_tr * METADATA_RATIO) + 0.5;
-
-    // No Accuracy
-    if (estimated_ac <= 1) return 10000.0;
-    
-    assert(estimated_ac != 0);
-    return true_etr / estimated_ac;
-  }
-}
-
 mockingjay_weight_adj::mockingjay_weight_adj(CACHE* _cache) : mockingjay_weight_adj(_cache, _cache->NUM_SET, _cache->NUM_WAY) {}
 
 mockingjay_weight_adj::mockingjay_weight_adj(CACHE* _cache, long sets, long ways) 
@@ -194,6 +168,7 @@ mockingjay_weight_adj::mockingjay_weight_adj(CACHE* _cache, long sets, long ways
                       METADATA_ELEMENT_COUNT(16),
                       ACCURACY_TABLE_METADATA_LOAD_SAMPLE(48),
                       ACCURACY_TABLE_METADATA_DELAY(16),
+                      METADATA_USELESS_THRESHOLD(2.0),
                       recency_cache(2048 /*PREFETCH_ACCURACY_CACHE_SIZE*/),
                       reuse_profiler(sets),
                       mockingjay_profiler(sets, ways, INF_ETR)
@@ -201,7 +176,7 @@ mockingjay_weight_adj::mockingjay_weight_adj(CACHE* _cache, long sets, long ways
   assert(HISTORY / GRANULARITY == METADATA_HISTORY / METADATA_GRANULARITY);
 
   etr = std::vector<std::vector<int>>(NUM_SET, std::vector<int>(NUM_WAY));
-  estimated_accuracy = std::vector<std::vector<int>>(NUM_SET, std::vector<int>(NUM_WAY));
+  metadata_sig = std::vector<std::vector<uint64_t>>(NUM_SET, std::vector<uint64_t>(NUM_WAY));
   etr_clock = std::vector<int>(NUM_SET, GRANULARITY);
   metadata_etr_clock = std::vector<int>(NUM_SET, METADATA_GRANULARITY);
   current_timestamp = std::vector<int>(NUM_SET, 0);
@@ -229,13 +204,19 @@ long mockingjay_weight_adj::find_victim(uint32_t triggering_cpu, uint64_t instr_
   }
 
   // your eviction policy goes here
-  double max_evict_value = -1000.0;
+  int max_etr = 0;
   int victim_way = 0;
   for (uint32_t way = 0; way < NUM_WAY; way++) {
-    double evict_value = eviction_value(etr[set][way], estimated_accuracy[set][way], current_set[way].metadata);
-    if (evict_value > max_evict_value)
+    if (abs(etr[set][way]) > max_etr ||
+          (abs(etr[set][way]) == max_etr &&
+            etr[set][way] < 0)) { //TECHNICALLY this logic is not correct. While this does prioritize negative values, it does prioritize negative values over other negative values.
+      max_etr = abs(etr[set][way]);
+      victim_way = way;
+    }
+
+    if (max_etr < INF_ETR && metadata_sig[set][way] != METADATA_NO_SIG && acp.count(metadata_sig[set][way]) && acp[metadata_sig[set][way]] < METADATA_USELESS_THRESHOLD)
     {
-      max_evict_value = evict_value;
+      max_etr = INF_ETR - 1;
       victim_way = way;
     }
   }
@@ -244,9 +225,8 @@ long mockingjay_weight_adj::find_victim(uint32_t triggering_cpu, uint64_t instr_
   
   if ((type == access_type::METADATA_STORE) || (type == access_type::METADATA_LOAD))
   {
-    if (!rdp.count(pc_signature) || rdp[pc_signature] > MAX_RD 
-        || (accuracy_table.count(pc_signature) && accuracy_table[pc_signature].accuracy >= -0.5 
-            && (accuracy_table[pc_signature].accuracy <= 2.0 || eviction_value(rdp[pc_signature] / GRANULARITY, accuracy_table[pc_signature].accuracy, true) > max_evict_value)))
+    if (!rdp.count(pc_signature) || rdp[pc_signature] > MAX_RD || rdp[pc_signature] / GRANULARITY > max_etr 
+        || (acp.count(pc_signature) && acp[pc_signature] < METADATA_USELESS_THRESHOLD))
     {
       mockingjay_profiler.record_bypass(ip, type);
       return NUM_WAY;
@@ -255,7 +235,7 @@ long mockingjay_weight_adj::find_victim(uint32_t triggering_cpu, uint64_t instr_
   else
   {
     if (type != access_type::WRITE && rdp.count(pc_signature) &&
-            (rdp[pc_signature] > MAX_RD || eviction_value(rdp[pc_signature] / GRANULARITY, 0, false) > max_evict_value))
+            (rdp[pc_signature] > MAX_RD || rdp[pc_signature] / GRANULARITY > max_etr))
     {
       mockingjay_profiler.record_bypass(ip, type);
       return NUM_WAY;
@@ -273,7 +253,11 @@ void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, lo
   {
     assert(way < NUM_WAY);
     int previous_etr = etr[set][way];
-    if(!hit) etr[set][way] = -1 * INF_ETR;
+    if(!hit)
+    {
+      etr[set][way] = -1 * INF_ETR;
+      metadata_sig[set][way] = METADATA_NO_SIG;
+    }
     mockingjay_profiler.record_update(set, way, ip, victim_addr, type, hit, etr[set][way], previous_etr);
     return;
   }
@@ -291,9 +275,20 @@ void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, lo
     }
   }
 
-  uint64_t signature = build_signature(triggering_cpu, ip, type, hit);
-  
+  uint64_t signature = build_signature(triggering_cpu, ip, type, hit);  
   const bool metadata_access = (type == access_type::METADATA_STORE) || (type == access_type::METADATA_LOAD);
+
+  if (way < NUM_WAY)
+  {
+    if (metadata_access)
+    {
+      metadata_sig[set][way] = signature;
+    }
+    else
+    {
+      metadata_sig[set][way] = METADATA_NO_SIG;
+    }
+  }
 
   if (is_sampled_set(set))
   {
@@ -334,6 +329,7 @@ void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, lo
 
     if (type != access_type::METADATA_LOAD || sampled_cache_hit) 
     {
+      // Invalidate entry if one isn't available
       int lru_way = -1;
       int lru_rd = -1;
       for (int w = 0; w < SAMPLED_CACHE_WAYS; w++) {
@@ -355,9 +351,7 @@ void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, lo
           lru_rd = sample;
         }
       }
-      detrain(sampled_cache_index, lru_way, metadata_access);
-
-      uint64_t previous_signature = 0;
+      if (!sampled_cache_hit) detrain(sampled_cache_index, lru_way, metadata_access);
 
       if (!sampled_cache_hit)
       {
@@ -370,18 +364,8 @@ void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, lo
           }
         }
       }
-      else
-      {
-        previous_signature = sampled_cache[sampled_cache_index][victim_way].signature;
-      }
 
       assert(victim_way > -1);
-
-      sampled_cache[sampled_cache_index][victim_way].valid = true;
-      sampled_cache[sampled_cache_index][victim_way].signature = signature;
-      sampled_cache[sampled_cache_index][victim_way].tag = sampled_cache_tag;
-      sampled_cache[sampled_cache_index][victim_way].metadata = metadata_access;
-      sampled_cache[sampled_cache_index][victim_way].timestamp = current_timestamp[set];
 
       if ( metadata_access )
       {
@@ -392,6 +376,7 @@ void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, lo
         else if ( sampled_cache[sampled_cache_index][victim_way].metadata_blk != nullptr )
         {
           assert(sampled_cache_hit);
+          uint64_t previous_signature = sampled_cache[sampled_cache_index][victim_way].signature;
 
           auto& info = accuracy_table[previous_signature];
           info.metadata_loads += 1;
@@ -414,18 +399,31 @@ void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, lo
           
           if (info.metadata_loads >= ACCURACY_TABLE_METADATA_LOAD_SAMPLE + ACCURACY_TABLE_METADATA_DELAY)
           {
-            info.accuracy = static_cast<double>(info.useful_prefetches) / info.metadata_loads;
+            acp[previous_signature] = static_cast<double>(info.useful_prefetches) / info.metadata_loads;
             info.metadata_loads = 0;
             info.useful_prefetches = 0;
 
-            printf("Signature:%lx Accuracy:%f\n", previous_signature, info.accuracy);
+            printf("Signature:%lu Accuracy:%f\n", previous_signature, acp[previous_signature]);
           }
+        }
+        else
+        {
+            sampled_cache[sampled_cache_index][victim_way].metadata_blk = nullptr;
         }
       }
       else
       {
         sampled_cache[sampled_cache_index][victim_way].metadata_blk = nullptr;
       }
+
+      // Metadata misses don't exist/aren't useful
+      if (type != access_type::METADATA_LOAD || hit) sampled_cache[sampled_cache_index][victim_way].valid = true;
+      else sampled_cache[sampled_cache_index][victim_way].valid = false;
+      
+      sampled_cache[sampled_cache_index][victim_way].signature = signature;
+      sampled_cache[sampled_cache_index][victim_way].tag = sampled_cache_tag;
+      sampled_cache[sampled_cache_index][victim_way].metadata = metadata_access;
+      sampled_cache[sampled_cache_index][victim_way].timestamp = current_timestamp[set];
       
       if ( !metadata_access ) current_timestamp[set] = increment_timestamp(current_timestamp[set]);
     }
@@ -483,31 +481,7 @@ void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, lo
       etr[set][way] = rdp[signature] / GRANULARITY;
     }
 
-    if (metadata_access)
-    {
-      if (accuracy_table.count(signature) && accuracy_table[signature].accuracy >= -0.5)
-      {
-        if (accuracy_table[signature].accuracy < 2.0) estimated_accuracy[set][way] = 0;
-        else if (accuracy_table[signature].accuracy < 3.0) estimated_accuracy[set][way] = 2;
-        else if (accuracy_table[signature].accuracy < 4.0) estimated_accuracy[set][way] = 3;
-        else if (accuracy_table[signature].accuracy < 5.0) estimated_accuracy[set][way] = 4;
-        else if (accuracy_table[signature].accuracy < 6.0) estimated_accuracy[set][way] = 5;
-        else if (accuracy_table[signature].accuracy < 7.0) estimated_accuracy[set][way] = 6;
-        else if (accuracy_table[signature].accuracy < 8.0) estimated_accuracy[set][way] = 7;
-        else if (accuracy_table[signature].accuracy < 9.0) estimated_accuracy[set][way] = 8; 
-        else if (accuracy_table[signature].accuracy < 10.0) estimated_accuracy[set][way] = 9;
-        else if (accuracy_table[signature].accuracy < 11.0) estimated_accuracy[set][way] = 10;
-        else if (accuracy_table[signature].accuracy < 12.0) estimated_accuracy[set][way] = 11;
-        else if (accuracy_table[signature].accuracy < 13.0) estimated_accuracy[set][way] = 12;
-        else if (accuracy_table[signature].accuracy < 14.0) estimated_accuracy[set][way] = 13;
-        else if (accuracy_table[signature].accuracy < 15.0) estimated_accuracy[set][way] = 14;
-        else estimated_accuracy[set][way] = 15;
-      }
-      else
-      {
-        estimated_accuracy[set][way] = 4; // base backup value
-      }
-    }
+    if (type == access_type::METADATA_LOAD) etr[set][way] = INF_ETR;
 
     mockingjay_profiler.record_update(set, way, ip, victim_addr, type, hit, etr[set][way], previous_etr);
   }

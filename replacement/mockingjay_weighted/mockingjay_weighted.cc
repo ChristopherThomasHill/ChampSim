@@ -220,8 +220,8 @@ long mockingjay_weighted::find_victim(uint32_t triggering_cpu, uint64_t instr_id
     if (!rdp.count(pc_signature) || rdp[pc_signature] > MAX_RD || rdp[pc_signature] / GRANULARITY > max_etr
           /*|| !accuracy_table.count(pc_signature) || accuracy_table[pc_signature].accuracy < 0.5*/)
     {
-        mockingjay_profiler.record_bypass(ip, type);
-        return NUM_WAY;
+      mockingjay_profiler.record_bypass(ip, type);
+      return NUM_WAY;
     }
   }
   else

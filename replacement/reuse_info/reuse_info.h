@@ -19,7 +19,7 @@ class reuse_info : public champsim::modules::replacement
     access_type type;
 
     bool operator==(const Signature& other) const {
-        return (pc == other.pc) && (type == other.type);
+      return (pc == other.pc) && (type == other.type);
     }
   };
 
