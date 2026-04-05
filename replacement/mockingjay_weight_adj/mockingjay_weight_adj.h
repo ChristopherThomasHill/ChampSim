@@ -39,11 +39,15 @@ class mockingjay_weight_adj : public champsim::modules::replacement {
   const double TEMP_DIFFERENCE;
   const double FLEXMIN_PENALTY;
 
-  const int METADATA_ELEMENT_COUNT;
-  const uint32_t ACCURACY_TABLE_METADATA_LOAD_SAMPLE;
-  const uint32_t ACCURACY_TABLE_METADATA_DELAY;
+  const int PREFETCH_SAMPLE_HISTORY;
+  const int PREFETCH_SAMPLED_CACHE_WAYS;
+  const int LOG2_PREFETCH_SAMPLED_CACHE_SETS;
+  const int PREFETCH_SAMPLED_CACHE_INF;
+  const int PREFETCH_TIMESTAMP_BITS;
 
-  const double METADATA_USELESS_THRESHOLD;
+  const int METADATA_SHIFT_ACCURACY;
+  const double METADATA_USELESS_ACCURACY;
+
   const uint64_t METADATA_NO_SIG = 0xdeadbeef;
   
   std::vector<std::vector<int>> etr;
@@ -52,22 +56,27 @@ class mockingjay_weight_adj : public champsim::modules::replacement {
   std::vector<int> metadata_etr_clock;
 
   std::unordered_map<uint64_t, int> rdp;
-  std::unordered_map<uint64_t, double> acp;
+
+  std::unordered_map<uint64_t, int> accuracy_hits;
+  std::unordered_map<uint64_t, int> accuracy_samples;
 
   std::vector<int> current_timestamp;
+  int prefetch_current_timestamp;
 
   struct SampledCacheLine
   {
-    bool valid;
+    bool valid = false;
     uint64_t tag;
-    bool metadata;
     uint64_t signature;
     int timestamp;
+    bool prefetched; /*only used by prefetch sampled cache*/
 
     std::shared_ptr<champsim::MetadataBlk> metadata_blk = nullptr;
   };
+
   std::unordered_map<uint64_t, SampledCacheLine*> data_sampled_cache;
   std::unordered_map<uint64_t, SampledCacheLine*> metadata_sampled_cache;
+  std::unordered_map<uint64_t, SampledCacheLine*> prefetch_sampled_cache;
   
   bool is_sampled_set(long set);
   uint64_t CRC_HASH(uint64_t _blockAddress);
@@ -80,65 +89,15 @@ class mockingjay_weight_adj : public champsim::modules::replacement {
   int increment_timestamp(int input);
   int time_elapsed(int global, int local);
 
-  class RecencyCache
-  {
-  private:
-    std::deque<uint64_t> order;
-    std::unordered_map<uint64_t, uint64_t> present;
-    std::size_t PREFETCH_ACCURACY_CACHE_SIZE;
-
-  public:
-    RecencyCache(std::size_t _prefetch_accuracy_cache_size) : PREFETCH_ACCURACY_CACHE_SIZE(_prefetch_accuracy_cache_size)
-    {
-    }
-
-    void access(const champsim::block_number& key, const uint64_t& value)
-    {
-      if (order.size() == PREFETCH_ACCURACY_CACHE_SIZE)
-      {
-        present.erase(order.front());
-        order.pop_front();
-      }
-
-      order.push_back(key.to<uint64_t>());
-      present[key.to<uint64_t>()] = value;
-    }
-
-    std::optional<uint64_t> get(const champsim::block_number& key) const
-    {
-      auto it = present.find(key.to<uint64_t>());
-      if (it == present.end()) {
-        return std::nullopt;
-      }
-      return it->second;
-    }
-
-    void invalidate(const champsim::block_number& key)
-    {
-      present.erase(key.to<uint64_t>());
-
-      auto qit = std::find(order.begin(), order.end(), key.to<uint64_t>());
-      if (qit != order.end()) {
-        order.erase(qit);
-      }
-    }
-  };
-
-  RecencyCache recency_cache;
-
-  struct AccuracyInfo
-  {
-    uint32_t metadata_loads = 0;
-    uint32_t useful_prefetches = 0;
-  };
-
-  std::unordered_map<uint64_t /*signature*/, AccuracyInfo> accuracy_table;
-
-  double eviction_value(int estimated_tr, int estimated_ac, bool metadata_access);
+  uint64_t get_prefetch_sampled_cache_index(uint64_t full_addr);
+  uint64_t get_prefetch_sampled_cache_tag(uint64_t x);
+  int search_prefetch_sampled_cache(uint64_t blockAddress, uint32_t set);
+  void prefetch_detrain(uint32_t set, int way);
+  int prefetch_time_elapsed(int local);
 
   class ReuseProfiler
   {
-    const uint64_t MAX_REUSE = 1024;
+    const uint64_t MAX_REUSE = 512;
 
     struct TrackerKey
     {

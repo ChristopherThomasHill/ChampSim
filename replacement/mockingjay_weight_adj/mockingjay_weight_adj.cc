@@ -77,12 +77,39 @@ uint64_t mockingjay_weight_adj::get_sampled_cache_tag(uint64_t x)
   return x;
 }
 
+uint64_t mockingjay_weight_adj::get_prefetch_sampled_cache_index(uint64_t full_addr)
+{
+  full_addr = full_addr >> LOG2_BLOCK_SIZE;
+  full_addr = (full_addr << (64 - LOG2_PREFETCH_SAMPLED_CACHE_SETS)) >> (64 - LOG2_PREFETCH_SAMPLED_CACHE_SETS);
+  return full_addr;
+}
+
+uint64_t mockingjay_weight_adj::get_prefetch_sampled_cache_tag(uint64_t x)
+{
+  x >>= LOG2_BLOCK_SIZE + LOG2_PREFETCH_SAMPLED_CACHE_SETS;
+  x = (x << (64 - SAMPLED_CACHE_TAG_BITS)) >> (64 - SAMPLED_CACHE_TAG_BITS);
+  return x;
+}
+
 int mockingjay_weight_adj::search_sampled_cache(uint64_t blockAddress, bool metadata, uint32_t set)
 {
   SampledCacheLine* sampled_set = metadata ? metadata_sampled_cache[set] : data_sampled_cache[set];
   for (int way = 0; way < SAMPLED_CACHE_WAYS; way++) {
-      if (sampled_set[way].valid && (sampled_set[way].tag == blockAddress) && (sampled_set[way].metadata == metadata)) {
+      if (sampled_set[way].valid && (sampled_set[way].tag == blockAddress)) {
           return way;
+      }
+  }
+  return -1;
+}
+
+int mockingjay_weight_adj::search_prefetch_sampled_cache(uint64_t blockAddress, uint32_t set)
+{
+  SampledCacheLine* sampled_set = prefetch_sampled_cache[set];
+  for (int way = 0; way < PREFETCH_SAMPLED_CACHE_WAYS; way++)
+  {
+      if (sampled_set[way].valid && (sampled_set[way].tag == blockAddress))
+      {
+        return way;
       }
   }
   return -1;
@@ -104,6 +131,23 @@ void mockingjay_weight_adj::detrain(uint32_t set, int way, bool metadata)
   }
   assert(rdp[temp.signature] <= INF_RD);
   sampled_cache[set][way].valid = false;
+}
+
+void mockingjay_weight_adj::prefetch_detrain(uint32_t set, int way)
+{
+  SampledCacheLine temp = prefetch_sampled_cache[set][way];
+  if (!temp.valid) return;
+
+  accuracy_samples[temp.signature] += 1;
+  if (accuracy_samples[temp.signature] >= METADATA_SHIFT_ACCURACY)
+  {
+    printf("Shifting Signature %lu Accuracy %.6f\n", temp.signature, static_cast<double>(accuracy_hits[temp.signature]) / accuracy_samples[temp.signature]);
+
+    accuracy_hits[temp.signature] >>= 1;
+    accuracy_samples[temp.signature] >>= 1;
+  }
+  assert(accuracy_hits[temp.signature] >= 0);
+  assert(accuracy_samples[temp.signature] > 0);
 }
 
 int mockingjay_weight_adj::temporal_difference(int init, int sample)
@@ -140,6 +184,15 @@ int mockingjay_weight_adj::time_elapsed(int global, int local)
   return global - local;
 }
 
+int mockingjay_weight_adj::prefetch_time_elapsed(int local)
+{
+  if (prefetch_current_timestamp >= local) {
+    return prefetch_current_timestamp - local;
+  }
+
+  return prefetch_current_timestamp + (1 << PREFETCH_TIMESTAMP_BITS) - local;
+}
+
 mockingjay_weight_adj::mockingjay_weight_adj(CACHE* _cache) : mockingjay_weight_adj(_cache, _cache->NUM_SET, _cache->NUM_WAY) {}
 
 mockingjay_weight_adj::mockingjay_weight_adj(CACHE* _cache, long sets, long ways) 
@@ -152,7 +205,7 @@ mockingjay_weight_adj::mockingjay_weight_adj(CACHE* _cache, long sets, long ways
                       LOG2_SAMPLED_SETS(LOG2_LLC_SIZE - 16),
                       HISTORY(8),
                       GRANULARITY(8),
-                      METADATA_HISTORY(64),
+                      METADATA_HISTORY(32),
                       METADATA_GRANULARITY(METADATA_HISTORY * GRANULARITY / HISTORY),
                       INF_RD(NUM_WAY * HISTORY - 1),
                       INF_ETR((NUM_WAY * HISTORY / GRANULARITY) - 1),
@@ -165,11 +218,13 @@ mockingjay_weight_adj::mockingjay_weight_adj(CACHE* _cache, long sets, long ways
                       TIMESTAMP_BITS(11),
                       TEMP_DIFFERENCE(1.0/16.0),
                       FLEXMIN_PENALTY(2.0 - std::log2(NUM_CPUS)/4.0),
-                      METADATA_ELEMENT_COUNT(16),
-                      ACCURACY_TABLE_METADATA_LOAD_SAMPLE(48),
-                      ACCURACY_TABLE_METADATA_DELAY(16),
-                      METADATA_USELESS_THRESHOLD(2.0),
-                      recency_cache(2048 /*PREFETCH_ACCURACY_CACHE_SIZE*/),
+                      PREFETCH_SAMPLE_HISTORY(2),
+                      PREFETCH_SAMPLED_CACHE_WAYS(4),
+                      LOG2_PREFETCH_SAMPLED_CACHE_SETS(8),
+                      PREFETCH_SAMPLED_CACHE_INF(PREFETCH_SAMPLE_HISTORY * NUM_WAY * (1 << LOG2_SAMPLED_CACHE_SETS)),
+                      PREFETCH_TIMESTAMP_BITS(12),
+                      METADATA_SHIFT_ACCURACY(256),
+                      METADATA_USELESS_ACCURACY(0.125),
                       reuse_profiler(sets),
                       mockingjay_profiler(sets, ways, INF_ETR)
 {
@@ -180,6 +235,7 @@ mockingjay_weight_adj::mockingjay_weight_adj(CACHE* _cache, long sets, long ways
   etr_clock = std::vector<int>(NUM_SET, GRANULARITY);
   metadata_etr_clock = std::vector<int>(NUM_SET, METADATA_GRANULARITY);
   current_timestamp = std::vector<int>(NUM_SET, 0);
+  prefetch_current_timestamp = 0;
 
   for(uint32_t set = 0; set < NUM_SET; set++)
   {
@@ -193,10 +249,17 @@ mockingjay_weight_adj::mockingjay_weight_adj(CACHE* _cache, long sets, long ways
       }
     }
   }
+
+  for (uint32_t set = 0; set < (1u << LOG2_PREFETCH_SAMPLED_CACHE_SETS); set++)
+  {
+    prefetch_sampled_cache[set] = new SampledCacheLine[PREFETCH_SAMPLED_CACHE_WAYS]();
+  }
 }
 
 long mockingjay_weight_adj::find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const champsim::cache_block* current_set, champsim::address ip, champsim::address full_addr, access_type type)
 {
+  assert(type != access_type::METADATA_LOAD);
+
   for (uint32_t way = 0; way < NUM_WAY; way++) {
     if (current_set[way].valid == false) {
       return way;
@@ -214,19 +277,20 @@ long mockingjay_weight_adj::find_victim(uint32_t triggering_cpu, uint64_t instr_
       victim_way = way;
     }
 
-    if (max_etr < INF_ETR && metadata_sig[set][way] != METADATA_NO_SIG && acp.count(metadata_sig[set][way]) && acp[metadata_sig[set][way]] < METADATA_USELESS_THRESHOLD)
+    if (metadata_sig[set][way] != METADATA_NO_SIG && (!accuracy_hits.count(metadata_sig[set][way]) || (static_cast<double>(accuracy_hits[metadata_sig[set][way]]) / accuracy_samples[metadata_sig[set][way]]) < METADATA_USELESS_ACCURACY))
     {
-      max_etr = INF_ETR - 1;
+      max_etr = INF_ETR;
       victim_way = way;
+      break;
     }
   }
   
   uint64_t pc_signature = build_signature(triggering_cpu, ip, type, false);
   
-  if ((type == access_type::METADATA_STORE) || (type == access_type::METADATA_LOAD))
+  if (type == access_type::METADATA_STORE)
   {
-    if (!rdp.count(pc_signature) || rdp[pc_signature] > MAX_RD || rdp[pc_signature] / GRANULARITY > max_etr 
-        || (acp.count(pc_signature) && acp[pc_signature] < METADATA_USELESS_THRESHOLD))
+    if (!rdp.count(pc_signature) || rdp[pc_signature] > (INF_RD - 10) /*MAX_RD*/ || rdp[pc_signature] / GRANULARITY > max_etr 
+        || !accuracy_hits.count(pc_signature) || (static_cast<double>(accuracy_hits[pc_signature]) / accuracy_samples[pc_signature] <= METADATA_USELESS_ACCURACY))
     {
       mockingjay_profiler.record_bypass(ip, type);
       return NUM_WAY;
@@ -262,21 +326,43 @@ void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, lo
     return;
   }
   
-  if (type != access_type::METADATA_LOAD && type != access_type::METADATA_STORE)
-  {
-    champsim::block_number block_addr(full_addr);
-    auto recency_entry = recency_cache.get(block_addr);
+  const bool metadata_access = (type == access_type::METADATA_STORE) || (type == access_type::METADATA_LOAD);
 
-    if (recency_entry && !local_pref)
+  if (!metadata_access && !local_pref)
+  {
+    uint64_t sampled_cache_index = get_prefetch_sampled_cache_index(full_addr.to<uint64_t>());
+    uint64_t sampled_cache_tag = get_prefetch_sampled_cache_tag(full_addr.to<uint64_t>());
+    int sampled_cache_way = search_prefetch_sampled_cache(sampled_cache_tag, sampled_cache_index);
+    
+    if (sampled_cache_way > -1)
     {
-      auto& info = accuracy_table[*recency_entry];
-      info.useful_prefetches += 1;
-      recency_cache.invalidate(block_addr);
+      uint64_t last_signature = prefetch_sampled_cache[sampled_cache_index][sampled_cache_way].signature;
+      uint64_t last_timestamp = prefetch_sampled_cache[sampled_cache_index][sampled_cache_way].timestamp;
+      
+      int sample = prefetch_time_elapsed(last_timestamp);
+      if (sample < PREFETCH_SAMPLED_CACHE_INF)
+      {
+        accuracy_hits[last_signature] += 1;
+        accuracy_samples[last_signature] += 1;
+
+        if (accuracy_samples[last_signature] >= METADATA_SHIFT_ACCURACY)
+        {
+          printf("Shifting Signature %lu Accuracy %.6f\n", last_signature, static_cast<double>(accuracy_hits[last_signature]) / accuracy_samples[last_signature]);
+          
+          accuracy_hits[last_signature] >>= 1;
+          accuracy_samples[last_signature] >>= 1;
+        }
+      }
+      else
+      {
+        prefetch_detrain(sampled_cache_index, sampled_cache_way);
+      }
+
+      prefetch_sampled_cache[sampled_cache_index][sampled_cache_way].valid = false;
     }
   }
 
   uint64_t signature = build_signature(triggering_cpu, ip, type, hit);  
-  const bool metadata_access = (type == access_type::METADATA_STORE) || (type == access_type::METADATA_LOAD);
 
   if (way < NUM_WAY)
   {
@@ -306,7 +392,8 @@ void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, lo
 
       if (metadata_access) sample = sample / METADATA_RATIO;
 
-      if (sample <= INF_RD) {
+      if (sample <= INF_RD)
+      {
         if (type == access_type::PREFETCH) sample = sample * FLEXMIN_PENALTY;
         else if (type == access_type::METADATA_STORE) sample = INF_RD;
         
@@ -330,28 +417,30 @@ void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, lo
     if (type != access_type::METADATA_LOAD || sampled_cache_hit) 
     {
       // Invalidate entry if one isn't available
-      int lru_way = -1;
-      int lru_rd = -1;
-      for (int w = 0; w < SAMPLED_CACHE_WAYS; w++) {
-        if (sampled_cache[sampled_cache_index][w].valid == false) {
-          lru_way = w;
-          lru_rd = INF_RD + 1;
-          continue;
-        }
+      {
+        int lru_way = -1;
+        int lru_rd = -1;
+        for (int w = 0; w < SAMPLED_CACHE_WAYS; w++) {
+          if (sampled_cache[sampled_cache_index][w].valid == false) {
+            lru_way = w;
+            lru_rd = INF_RD + 1;
+            continue;
+          }
 
-        uint64_t last_timestamp = sampled_cache[sampled_cache_index][w].timestamp;
-        int sample = time_elapsed(current_timestamp[set], last_timestamp);
-        if ( sampled_cache[sampled_cache_index][w].metadata ) sample = sample / METADATA_RATIO;
-        if (sample > INF_RD) {
-          lru_way = w;
-          lru_rd = INF_RD + 1;
-          detrain(sampled_cache_index, w, metadata_access);
-        } else if (sample > lru_rd) {
-          lru_way = w;
-          lru_rd = sample;
+          uint64_t last_timestamp = sampled_cache[sampled_cache_index][w].timestamp;
+          int sample = time_elapsed(current_timestamp[set], last_timestamp);
+          if (metadata_access) sample = sample / METADATA_RATIO;
+          if (sample > INF_RD) {
+            lru_way = w;
+            lru_rd = INF_RD + 1;
+            detrain(sampled_cache_index, w, metadata_access);
+          } else if (sample > lru_rd) {
+            lru_way = w;
+            lru_rd = sample;
+          }
         }
+        if (!sampled_cache_hit) detrain(sampled_cache_index, lru_way, metadata_access);
       }
-      if (!sampled_cache_hit) detrain(sampled_cache_index, lru_way, metadata_access);
 
       if (!sampled_cache_hit)
       {
@@ -373,42 +462,71 @@ void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, lo
         {
           cache->impl_prefetcher_metadata_request_fill(meta_request, sampled_cache[sampled_cache_index][victim_way].metadata_blk);
         }
-        else if ( sampled_cache[sampled_cache_index][victim_way].metadata_blk != nullptr )
-        {
-          assert(sampled_cache_hit);
-          uint64_t previous_signature = sampled_cache[sampled_cache_index][victim_way].signature;
-
-          auto& info = accuracy_table[previous_signature];
-          info.metadata_loads += 1;
-
-          if (info.metadata_loads < ACCURACY_TABLE_METADATA_LOAD_SAMPLE)
-          {
-            assert(type == access_type::METADATA_LOAD);
-            std::vector<champsim::address> prefetch_addresses = {};
-            cache->impl_prefetcher_metadata_simulate_update(meta_request, sampled_cache[sampled_cache_index][victim_way].metadata_blk, prefetch_addresses, sampled_cache_hit);
-
-            for (const auto& pref_addr : prefetch_addresses)
-            {
-              if ( !cache->in_cache(pref_addr, false /*metadata*/) )
-              {
-                champsim::block_number block_addr(pref_addr);
-                recency_cache.access(block_addr, previous_signature);
-              }
-            }
-          }
-          
-          if (info.metadata_loads >= ACCURACY_TABLE_METADATA_LOAD_SAMPLE + ACCURACY_TABLE_METADATA_DELAY)
-          {
-            acp[previous_signature] = static_cast<double>(info.useful_prefetches) / info.metadata_loads;
-            info.metadata_loads = 0;
-            info.useful_prefetches = 0;
-
-            printf("Signature:%lu Accuracy:%f\n", previous_signature, acp[previous_signature]);
-          }
-        }
         else
         {
-            sampled_cache[sampled_cache_index][victim_way].metadata_blk = nullptr;
+          assert(type == access_type::METADATA_LOAD && sampled_cache_hit);
+          assert(sampled_cache[sampled_cache_index][victim_way].metadata_blk != nullptr);
+
+          uint64_t previous_signature = sampled_cache[sampled_cache_index][victim_way].signature;
+
+          std::vector<champsim::address> prefetch_addresses = {};
+          cache->impl_prefetcher_metadata_simulate_update(meta_request, sampled_cache[sampled_cache_index][victim_way].metadata_blk, prefetch_addresses, true /*hit*/);
+
+          for (const auto& pref_addr : prefetch_addresses)
+          {
+            if ( !cache->in_cache(pref_addr, false /*metadata*/) )
+            {
+              uint64_t sampled_cache_index = get_prefetch_sampled_cache_index(pref_addr.to<uint64_t>());
+              uint64_t sampled_cache_tag = get_prefetch_sampled_cache_tag(pref_addr.to<uint64_t>());
+              int sampled_cache_way = search_prefetch_sampled_cache(sampled_cache_tag, sampled_cache_index);
+
+              if (sampled_cache_way > -1)
+              {
+                prefetch_detrain(sampled_cache_index, sampled_cache_way);
+              }
+
+              int lru_way = -1;
+              int lru_rd = -1;
+              for (int w = 0; w < PREFETCH_SAMPLED_CACHE_WAYS; w++)
+              {
+                if (prefetch_sampled_cache[sampled_cache_index][w].valid == false)
+                {
+                  lru_way = w;
+                  lru_rd = PREFETCH_SAMPLED_CACHE_INF + 1;
+                  continue;
+                }
+
+                uint64_t last_timestamp = prefetch_sampled_cache[sampled_cache_index][w].timestamp;
+                int sample = prefetch_time_elapsed(last_timestamp);
+
+                if (sample >= PREFETCH_SAMPLED_CACHE_INF) {
+                  lru_way = w;
+                  lru_rd = PREFETCH_SAMPLED_CACHE_INF + 1;
+                  prefetch_detrain(sampled_cache_index, w);
+                } else if (sample > lru_rd) {
+                  lru_way = w;
+                  lru_rd = sample;
+                }
+              }
+              prefetch_detrain(sampled_cache_index, lru_way);
+
+              prefetch_sampled_cache[sampled_cache_index][lru_way].valid = true;
+              prefetch_sampled_cache[sampled_cache_index][lru_way].tag = sampled_cache_tag;
+              prefetch_sampled_cache[sampled_cache_index][lru_way].signature = previous_signature;
+              prefetch_sampled_cache[sampled_cache_index][lru_way].timestamp = prefetch_current_timestamp;
+            }
+            else
+            {
+                accuracy_samples[previous_signature] += 1;
+                if (accuracy_samples[previous_signature] >= METADATA_SHIFT_ACCURACY)
+                {
+                    printf("Shifting Signature %lu Accuracy %.6f\n", previous_signature, static_cast<double>(accuracy_hits[previous_signature]) / accuracy_samples[previous_signature]);
+
+                    accuracy_hits[previous_signature] >>= 1;
+                    accuracy_samples[previous_signature] >>= 1;
+                }
+            }
+          }
         }
       }
       else
@@ -422,10 +540,13 @@ void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, lo
       
       sampled_cache[sampled_cache_index][victim_way].signature = signature;
       sampled_cache[sampled_cache_index][victim_way].tag = sampled_cache_tag;
-      sampled_cache[sampled_cache_index][victim_way].metadata = metadata_access;
       sampled_cache[sampled_cache_index][victim_way].timestamp = current_timestamp[set];
       
-      if ( !metadata_access ) current_timestamp[set] = increment_timestamp(current_timestamp[set]);
+      if ( !metadata_access )
+      {
+        current_timestamp[set] = increment_timestamp(current_timestamp[set]);
+        prefetch_current_timestamp = (prefetch_current_timestamp + 1) % (1 << PREFETCH_TIMESTAMP_BITS);
+      }
     }
   }
 
