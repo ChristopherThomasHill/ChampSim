@@ -205,12 +205,12 @@ mockingjay_weight_adj::mockingjay_weight_adj(CACHE* _cache, long sets, long ways
                       LOG2_SAMPLED_SETS(LOG2_LLC_SIZE - 16),
                       HISTORY(8),
                       GRANULARITY(8),
-                      METADATA_HISTORY(32),
+                      METADATA_HISTORY(64),
                       METADATA_GRANULARITY(METADATA_HISTORY * GRANULARITY / HISTORY),
                       INF_RD(NUM_WAY * HISTORY - 1),
                       INF_ETR((NUM_WAY * HISTORY / GRANULARITY) - 1),
                       MAX_RD(INF_RD - 22),
-                      METADATA_RATIO(METADATA_HISTORY / HISTORY),
+                      METADATA_HISTORY_RATIO(METADATA_HISTORY / HISTORY),
                       SAMPLED_CACHE_WAYS(5),
                       LOG2_SAMPLED_CACHE_SETS(4),
                       SAMPLED_CACHE_TAG_BITS(31 - LOG2_LLC_SIZE),
@@ -328,7 +328,7 @@ void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, lo
   
   const bool metadata_access = (type == access_type::METADATA_STORE) || (type == access_type::METADATA_LOAD);
 
-  if (!metadata_access && !local_pref)
+  if (!metadata_access)
   {
     uint64_t sampled_cache_index = get_prefetch_sampled_cache_index(full_addr.to<uint64_t>());
     uint64_t sampled_cache_tag = get_prefetch_sampled_cache_tag(full_addr.to<uint64_t>());
@@ -336,29 +336,36 @@ void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, lo
     
     if (sampled_cache_way > -1)
     {
-      uint64_t last_signature = prefetch_sampled_cache[sampled_cache_index][sampled_cache_way].signature;
-      uint64_t last_timestamp = prefetch_sampled_cache[sampled_cache_index][sampled_cache_way].timestamp;
-      
-      int sample = prefetch_time_elapsed(last_timestamp);
-      if (sample < PREFETCH_SAMPLED_CACHE_INF)
+      if (local_pref)
       {
-        accuracy_hits[last_signature] += 1;
-        accuracy_samples[last_signature] += 1;
-
-        if (accuracy_samples[last_signature] >= METADATA_SHIFT_ACCURACY)
-        {
-          printf("Shifting Signature %lu Accuracy %.6f\n", last_signature, static_cast<double>(accuracy_hits[last_signature]) / accuracy_samples[last_signature]);
-          
-          accuracy_hits[last_signature] >>= 1;
-          accuracy_samples[last_signature] >>= 1;
-        }
+        prefetch_sampled_cache[sampled_cache_index][sampled_cache_way].prefetched = true;
       }
       else
       {
-        prefetch_detrain(sampled_cache_index, sampled_cache_way);
-      }
+        uint64_t last_signature = prefetch_sampled_cache[sampled_cache_index][sampled_cache_way].signature;
+        uint64_t last_timestamp = prefetch_sampled_cache[sampled_cache_index][sampled_cache_way].timestamp;
+        
+        int sample = prefetch_time_elapsed(last_timestamp);
+        if (sample < PREFETCH_SAMPLED_CACHE_INF && (prefetch_sampled_cache[sampled_cache_index][sampled_cache_way].prefetched || !hit))
+        {
+          accuracy_hits[last_signature] += 1;
+          accuracy_samples[last_signature] += 1;
 
-      prefetch_sampled_cache[sampled_cache_index][sampled_cache_way].valid = false;
+          if (accuracy_samples[last_signature] >= METADATA_SHIFT_ACCURACY)
+          {
+            printf("Shifting Signature %lu Accuracy %.6f\n", last_signature, static_cast<double>(accuracy_hits[last_signature]) / accuracy_samples[last_signature]);
+            
+            accuracy_hits[last_signature] >>= 1;
+            accuracy_samples[last_signature] >>= 1;
+          }
+        }
+        else
+        {
+          prefetch_detrain(sampled_cache_index, sampled_cache_way);
+        }
+
+        prefetch_sampled_cache[sampled_cache_index][sampled_cache_way].valid = false;
+      }
     }
   }
 
@@ -390,7 +397,7 @@ void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, lo
       uint64_t last_timestamp = sampled_cache[sampled_cache_index][sampled_cache_way].timestamp;
       int sample = time_elapsed(current_timestamp[set], last_timestamp);
 
-      if (metadata_access) sample = sample / METADATA_RATIO;
+      if (metadata_access) sample = sample / METADATA_HISTORY_RATIO;
 
       if (sample <= INF_RD)
       {
@@ -429,7 +436,7 @@ void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, lo
 
           uint64_t last_timestamp = sampled_cache[sampled_cache_index][w].timestamp;
           int sample = time_elapsed(current_timestamp[set], last_timestamp);
-          if (metadata_access) sample = sample / METADATA_RATIO;
+          if (metadata_access) sample = sample / METADATA_HISTORY_RATIO;
           if (sample > INF_RD) {
             lru_way = w;
             lru_rd = INF_RD + 1;
@@ -474,58 +481,45 @@ void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, lo
 
           for (const auto& pref_addr : prefetch_addresses)
           {
-            if ( !cache->in_cache(pref_addr, false /*metadata*/) )
-            {
-              uint64_t sampled_cache_index = get_prefetch_sampled_cache_index(pref_addr.to<uint64_t>());
-              uint64_t sampled_cache_tag = get_prefetch_sampled_cache_tag(pref_addr.to<uint64_t>());
-              int sampled_cache_way = search_prefetch_sampled_cache(sampled_cache_tag, sampled_cache_index);
+            uint64_t sampled_cache_index = get_prefetch_sampled_cache_index(pref_addr.to<uint64_t>());
+            uint64_t sampled_cache_tag = get_prefetch_sampled_cache_tag(pref_addr.to<uint64_t>());
+            int sampled_cache_way = search_prefetch_sampled_cache(sampled_cache_tag, sampled_cache_index);
 
-              if (sampled_cache_way > -1)
+            if (sampled_cache_way > -1)
+            {
+              prefetch_detrain(sampled_cache_index, sampled_cache_way);
+            }
+
+            int lru_way = -1;
+            int lru_rd = -1;
+            for (int w = 0; w < PREFETCH_SAMPLED_CACHE_WAYS; w++)
+            {
+              if (prefetch_sampled_cache[sampled_cache_index][w].valid == false)
               {
-                prefetch_detrain(sampled_cache_index, sampled_cache_way);
+                lru_way = w;
+                lru_rd = PREFETCH_SAMPLED_CACHE_INF + 1;
+                continue;
               }
 
-              int lru_way = -1;
-              int lru_rd = -1;
-              for (int w = 0; w < PREFETCH_SAMPLED_CACHE_WAYS; w++)
-              {
-                if (prefetch_sampled_cache[sampled_cache_index][w].valid == false)
-                {
-                  lru_way = w;
-                  lru_rd = PREFETCH_SAMPLED_CACHE_INF + 1;
-                  continue;
-                }
+              uint64_t last_timestamp = prefetch_sampled_cache[sampled_cache_index][w].timestamp;
+              int sample = prefetch_time_elapsed(last_timestamp);
 
-                uint64_t last_timestamp = prefetch_sampled_cache[sampled_cache_index][w].timestamp;
-                int sample = prefetch_time_elapsed(last_timestamp);
-
-                if (sample >= PREFETCH_SAMPLED_CACHE_INF) {
-                  lru_way = w;
-                  lru_rd = PREFETCH_SAMPLED_CACHE_INF + 1;
-                  prefetch_detrain(sampled_cache_index, w);
-                } else if (sample > lru_rd) {
-                  lru_way = w;
-                  lru_rd = sample;
-                }
+              if (sample >= PREFETCH_SAMPLED_CACHE_INF) {
+                lru_way = w;
+                lru_rd = PREFETCH_SAMPLED_CACHE_INF + 1;
+                prefetch_detrain(sampled_cache_index, w);
+              } else if (sample > lru_rd) {
+                lru_way = w;
+                lru_rd = sample;
               }
-              prefetch_detrain(sampled_cache_index, lru_way);
-
-              prefetch_sampled_cache[sampled_cache_index][lru_way].valid = true;
-              prefetch_sampled_cache[sampled_cache_index][lru_way].tag = sampled_cache_tag;
-              prefetch_sampled_cache[sampled_cache_index][lru_way].signature = previous_signature;
-              prefetch_sampled_cache[sampled_cache_index][lru_way].timestamp = prefetch_current_timestamp;
             }
-            else
-            {
-                accuracy_samples[previous_signature] += 1;
-                if (accuracy_samples[previous_signature] >= METADATA_SHIFT_ACCURACY)
-                {
-                    printf("Shifting Signature %lu Accuracy %.6f\n", previous_signature, static_cast<double>(accuracy_hits[previous_signature]) / accuracy_samples[previous_signature]);
+            prefetch_detrain(sampled_cache_index, lru_way);
 
-                    accuracy_hits[previous_signature] >>= 1;
-                    accuracy_samples[previous_signature] >>= 1;
-                }
-            }
+            prefetch_sampled_cache[sampled_cache_index][lru_way].valid = true;
+            prefetch_sampled_cache[sampled_cache_index][lru_way].tag = sampled_cache_tag;
+            prefetch_sampled_cache[sampled_cache_index][lru_way].signature = previous_signature;
+            prefetch_sampled_cache[sampled_cache_index][lru_way].timestamp = prefetch_current_timestamp;
+            prefetch_sampled_cache[sampled_cache_index][lru_way].prefetched = false;
           }
         }
       }

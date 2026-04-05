@@ -28,7 +28,7 @@ class mockingjay_weight_adj : public champsim::modules::replacement {
   const int INF_ETR;
   const int MAX_RD;
 
-  const int METADATA_RATIO;
+  const int METADATA_HISTORY_RATIO;
 
   const int SAMPLED_CACHE_WAYS;
   const int LOG2_SAMPLED_CACHE_SETS;
