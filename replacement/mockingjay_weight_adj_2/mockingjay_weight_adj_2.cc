@@ -6,16 +6,16 @@
 #include <cmath>
 
 #include "champsim.h"
-#include "mockingjay_weight_adj.h"
+#include "mockingjay_weight_adj_2.h"
 
-bool mockingjay_weight_adj::is_sampled_set(long set)
+bool mockingjay_weight_adj_2::is_sampled_set(long set)
 {
   long mask_length = LOG2_LLC_SET - LOG2_SAMPLED_SETS;
   long mask = (1 << mask_length) - 1;
   return (set & mask) == ((set >> (LOG2_LLC_SET - mask_length)) & mask);
 }
 
-uint64_t mockingjay_weight_adj::CRC_HASH(uint64_t _blockAddress)
+uint64_t mockingjay_weight_adj_2::CRC_HASH(uint64_t _blockAddress)
 {
   static const unsigned long long crcPolynomial = 3988292384ULL;
   unsigned long long _returnVal = _blockAddress;
@@ -24,7 +24,7 @@ uint64_t mockingjay_weight_adj::CRC_HASH(uint64_t _blockAddress)
   return _returnVal;
 }
 
-uint64_t mockingjay_weight_adj::build_signature(uint32_t triggering_cpu, champsim::address ip, access_type type, uint8_t hit)
+uint64_t mockingjay_weight_adj_2::build_signature(uint32_t triggering_cpu, champsim::address ip, access_type type, uint8_t hit)
 {
   uint64_t signature;
   if (NUM_CPUS == 1) 
@@ -63,35 +63,35 @@ uint64_t mockingjay_weight_adj::build_signature(uint32_t triggering_cpu, champsi
   return signature;
 }
 
-uint64_t mockingjay_weight_adj::get_sampled_cache_index(uint64_t full_addr)
+uint64_t mockingjay_weight_adj_2::get_sampled_cache_index(uint64_t full_addr)
 {
   full_addr = full_addr >> LOG2_BLOCK_SIZE;
   full_addr = (full_addr << (64 - (LOG2_SAMPLED_CACHE_SETS + LOG2_LLC_SET))) >> (64 - (LOG2_SAMPLED_CACHE_SETS + LOG2_LLC_SET));
   return full_addr;
 }
 
-uint64_t mockingjay_weight_adj::get_sampled_cache_tag(uint64_t x)
+uint64_t mockingjay_weight_adj_2::get_sampled_cache_tag(uint64_t x)
 {
   x >>= LOG2_LLC_SET + LOG2_BLOCK_SIZE + LOG2_SAMPLED_CACHE_SETS;
   x = (x << (64 - SAMPLED_CACHE_TAG_BITS)) >> (64 - SAMPLED_CACHE_TAG_BITS);
   return x;
 }
 
-uint64_t mockingjay_weight_adj::get_prefetch_sampled_cache_index(uint64_t full_addr)
+uint64_t mockingjay_weight_adj_2::get_prefetch_sampled_cache_index(uint64_t full_addr)
 {
   full_addr = full_addr >> LOG2_BLOCK_SIZE;
   full_addr = (full_addr << (64 - LOG2_PREFETCH_SAMPLED_CACHE_SETS)) >> (64 - LOG2_PREFETCH_SAMPLED_CACHE_SETS);
   return full_addr;
 }
 
-uint64_t mockingjay_weight_adj::get_prefetch_sampled_cache_tag(uint64_t x)
+uint64_t mockingjay_weight_adj_2::get_prefetch_sampled_cache_tag(uint64_t x)
 {
   x >>= LOG2_BLOCK_SIZE + LOG2_PREFETCH_SAMPLED_CACHE_SETS;
   x = (x << (64 - SAMPLED_CACHE_TAG_BITS)) >> (64 - SAMPLED_CACHE_TAG_BITS);
   return x;
 }
 
-int mockingjay_weight_adj::search_sampled_cache(uint64_t blockAddress, bool metadata, uint32_t set)
+int mockingjay_weight_adj_2::search_sampled_cache(uint64_t blockAddress, bool metadata, uint32_t set)
 {
   SampledCacheLine* sampled_set = metadata ? metadata_sampled_cache[set] : data_sampled_cache[set];
   for (int way = 0; way < SAMPLED_CACHE_WAYS; way++) {
@@ -102,7 +102,7 @@ int mockingjay_weight_adj::search_sampled_cache(uint64_t blockAddress, bool meta
   return -1;
 }
 
-int mockingjay_weight_adj::search_prefetch_sampled_cache(uint64_t blockAddress, uint32_t set)
+int mockingjay_weight_adj_2::search_prefetch_sampled_cache(uint64_t blockAddress, uint32_t set)
 {
   SampledCacheLine* sampled_set = prefetch_sampled_cache[set];
   for (int way = 0; way < PREFETCH_SAMPLED_CACHE_WAYS; way++)
@@ -115,7 +115,7 @@ int mockingjay_weight_adj::search_prefetch_sampled_cache(uint64_t blockAddress, 
   return -1;
 }
 
-void mockingjay_weight_adj::detrain(uint32_t set, int way, bool metadata)
+void mockingjay_weight_adj_2::detrain(uint32_t set, int way, bool metadata)
 {
   std::unordered_map<uint64_t, SampledCacheLine*>& sampled_cache = metadata ? metadata_sampled_cache : data_sampled_cache;
 
@@ -133,7 +133,7 @@ void mockingjay_weight_adj::detrain(uint32_t set, int way, bool metadata)
   sampled_cache[set][way].valid = false;
 }
 
-void mockingjay_weight_adj::prefetch_detrain(uint32_t set, int way)
+void mockingjay_weight_adj_2::prefetch_detrain(uint32_t set, int way)
 {
   SampledCacheLine temp = prefetch_sampled_cache[set][way];
   if (!temp.valid) return;
@@ -151,7 +151,7 @@ void mockingjay_weight_adj::prefetch_detrain(uint32_t set, int way)
   prefetch_sampled_cache[set][way].valid = false;
 }
 
-int mockingjay_weight_adj::temporal_difference(int init, int sample)
+int mockingjay_weight_adj_2::temporal_difference(int init, int sample)
 {
   if (sample > init) {
     int diff = sample - init;
@@ -168,14 +168,14 @@ int mockingjay_weight_adj::temporal_difference(int init, int sample)
   }
 }
 
-int mockingjay_weight_adj::increment_timestamp(int input)
+int mockingjay_weight_adj_2::increment_timestamp(int input)
 {
   input++;
   input = input % (1 << TIMESTAMP_BITS);
   return input;
 }
 
-int mockingjay_weight_adj::time_elapsed(int global, int local)
+int mockingjay_weight_adj_2::time_elapsed(int global, int local)
 {
   if (global >= local) {
     return global - local;
@@ -185,7 +185,7 @@ int mockingjay_weight_adj::time_elapsed(int global, int local)
   return global - local;
 }
 
-int mockingjay_weight_adj::prefetch_time_elapsed(int local)
+int mockingjay_weight_adj_2::prefetch_time_elapsed(int local)
 {
   if (prefetch_current_timestamp >= local) {
     return prefetch_current_timestamp - local;
@@ -194,9 +194,9 @@ int mockingjay_weight_adj::prefetch_time_elapsed(int local)
   return prefetch_current_timestamp + (1 << PREFETCH_TIMESTAMP_BITS) - local;
 }
 
-mockingjay_weight_adj::mockingjay_weight_adj(CACHE* _cache) : mockingjay_weight_adj(_cache, _cache->NUM_SET, _cache->NUM_WAY) {}
+mockingjay_weight_adj_2::mockingjay_weight_adj_2(CACHE* _cache) : mockingjay_weight_adj_2(_cache, _cache->NUM_SET, _cache->NUM_WAY) {}
 
-mockingjay_weight_adj::mockingjay_weight_adj(CACHE* _cache, long sets, long ways) 
+mockingjay_weight_adj_2::mockingjay_weight_adj_2(CACHE* _cache, long sets, long ways) 
                     : replacement(_cache),
                       cache(_cache),
                       NUM_SET(sets),
@@ -212,7 +212,6 @@ mockingjay_weight_adj::mockingjay_weight_adj(CACHE* _cache, long sets, long ways
                       INF_ETR((NUM_WAY * HISTORY / GRANULARITY) - 1),
                       MAX_RD(INF_RD - 22),
                       METADATA_HISTORY_RATIO(METADATA_HISTORY / HISTORY),
-                      METADATA_ETR_RATIO(1.6),
                       SAMPLED_CACHE_WAYS(5),
                       LOG2_SAMPLED_CACHE_SETS(4),
                       SAMPLED_CACHE_TAG_BITS(31 - LOG2_LLC_SIZE),
@@ -258,7 +257,7 @@ mockingjay_weight_adj::mockingjay_weight_adj(CACHE* _cache, long sets, long ways
   }
 }
 
-long mockingjay_weight_adj::find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const champsim::cache_block* current_set, champsim::address ip, champsim::address full_addr, access_type type)
+long mockingjay_weight_adj_2::find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const champsim::cache_block* current_set, champsim::address ip, champsim::address full_addr, access_type type)
 {
   assert(type != access_type::METADATA_LOAD);
 
@@ -276,7 +275,20 @@ long mockingjay_weight_adj::find_victim(uint32_t triggering_cpu, uint64_t instr_
     double way_etr;
     if (metadata_sig[set][way] == METADATA_NO_SIG) way_etr = etr[set][way];
     else if (abs(etr[set][way]) == INF_ETR) way_etr = etr[set][way];
-    else way_etr = etr[set][way] / METADATA_ETR_RATIO;
+    else if (!accuracy_hits.count(metadata_sig[set][way])) way_etr = INF_ETR;
+    else 
+    {
+      double way_acc = static_cast<double>(accuracy_hits[metadata_sig[set][way]]) / accuracy_samples[metadata_sig[set][way]];
+      double comparable_etr = (etr[set][way] + (etr[set][way] >= 0 ? 0.5 : -0.5)) * METADATA_HISTORY_RATIO;
+      if (way_acc > 0.875) way_etr = comparable_etr / 12.0; // 14+ Useful (Rest Pollution)
+      else if (way_acc > 0.75) way_etr = comparable_etr / 10.0; // 12+ Useful (Rest Pollution)
+      else if (way_acc > 0.625) way_etr = comparable_etr / 8.0; // 10+ Useful (Rest Pollution)
+      else if (way_acc > 0.5) way_etr = comparable_etr / 6.0; // 8+ Useful (Rest Pollution)
+      else if (way_acc > 0.375) way_etr = comparable_etr / 4.0; // 6+ Useful (Rest Pollution)
+      else if (way_acc > 0.25) way_etr = comparable_etr / 2.0; // 4+ Useful (Rest Pollution)
+      else if (way_acc > 0.125) way_etr = comparable_etr; // 2+ Useful (Rest Pollution)
+      else way_etr = INF_ETR;
+    }
 
     if (abs(way_etr) > max_etr ||
           (abs(way_etr) == max_etr &&
@@ -284,21 +296,37 @@ long mockingjay_weight_adj::find_victim(uint32_t triggering_cpu, uint64_t instr_
       max_etr = abs(way_etr);
       victim_way = way;
     }
-
-    if (metadata_sig[set][way] != METADATA_NO_SIG && (!accuracy_hits.count(metadata_sig[set][way]) || (static_cast<double>(accuracy_hits[metadata_sig[set][way]]) / accuracy_samples[metadata_sig[set][way]]) < METADATA_USELESS_ACCURACY))
-    {
-      max_etr = INF_ETR;
-      victim_way = way;
-      break;
-    }
   }
   
   uint64_t pc_signature = build_signature(triggering_cpu, ip, type, false);
   
   if (type == access_type::METADATA_STORE)
   {
-    if (!rdp.count(pc_signature) || rdp[pc_signature] > (INF_RD - 10) /*MAX_RD*/ || rdp[pc_signature] / GRANULARITY / METADATA_ETR_RATIO > max_etr 
-        || !accuracy_hits.count(pc_signature) || (static_cast<double>(accuracy_hits[pc_signature]) / accuracy_samples[pc_signature] <= METADATA_USELESS_ACCURACY))
+    if (!accuracy_hits.count(pc_signature) || (static_cast<double>(accuracy_hits[pc_signature]) / accuracy_samples[pc_signature] <= METADATA_USELESS_ACCURACY))
+    {
+      mockingjay_profiler.record_bypass(ip, type);
+      return NUM_WAY;
+    }
+
+    if (!rdp.count(pc_signature) || rdp[pc_signature] > (INF_RD - 10) /*MAX_RD*/)
+    {
+      mockingjay_profiler.record_bypass(ip, type);
+      return NUM_WAY;
+    }
+
+    double insert_acc = static_cast<double>(accuracy_hits[pc_signature]) / accuracy_samples[pc_signature];
+    double comparable_etr = ((rdp[pc_signature] / GRANULARITY) + 0.5) * METADATA_HISTORY_RATIO;
+    double insert_etr;
+    if (insert_acc > 0.875) insert_etr = comparable_etr / 12.0; // 14+ Useful (Rest Pollution)
+    else if (insert_acc > 0.75) insert_etr = comparable_etr / 10.0; // 12+ Useful (Rest Pollution)
+    else if (insert_acc > 0.625) insert_etr = comparable_etr / 8.0; // 10+ Useful (Rest Pollution)
+    else if (insert_acc > 0.5) insert_etr = comparable_etr / 6.0; // 8+ Useful (Rest Pollution)
+    else if (insert_acc > 0.375) insert_etr = comparable_etr / 4.0; // 6+ Useful (Rest Pollution)
+    else if (insert_acc > 0.25) insert_etr = comparable_etr / 2.0; // 4+ Useful (Rest Pollution)
+    else if (insert_acc > 0.125) insert_etr = comparable_etr; // 2+ Useful (Rest Pollution)
+    else insert_etr = INF_ETR;
+
+    if (insert_etr > max_etr)
     {
       mockingjay_profiler.record_bypass(ip, type);
       return NUM_WAY;
@@ -317,7 +345,7 @@ long mockingjay_weight_adj::find_victim(uint32_t triggering_cpu, uint64_t instr_
   return victim_way;
 }
 
-void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip, champsim::address victim_addr, access_type type, uint8_t hit, const std::shared_ptr<champsim::MetadataRequest>& meta_request, bool local_pref)
+void mockingjay_weight_adj_2::update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip, champsim::address victim_addr, access_type type, uint8_t hit, const std::shared_ptr<champsim::MetadataRequest>& meta_request, bool local_pref)
 {
   reuse_profiler.track_info(set, full_addr, ip, type, hit);
 
@@ -610,13 +638,13 @@ void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, lo
   }
 }
 
-void mockingjay_weight_adj::replacement_final_stats()
+void mockingjay_weight_adj_2::replacement_final_stats()
 {
   reuse_profiler.print_profiler(this);
   mockingjay_profiler.print_profiler(this);
 }
 
-void mockingjay_weight_adj::ReuseProfiler::track_info(long set, champsim::address full_addr, champsim::address ip, access_type type, bool hit)
+void mockingjay_weight_adj_2::ReuseProfiler::track_info(long set, champsim::address full_addr, champsim::address ip, access_type type, bool hit)
 {
   if (type == access_type::WRITE || type == access_type::TRANSLATION) return;
 
@@ -652,7 +680,7 @@ void mockingjay_weight_adj::ReuseProfiler::track_info(long set, champsim::addres
   if (!metadata_access) set_age[set] += 1;
 }
 
-void mockingjay_weight_adj::ReuseProfiler::print_profiler(mockingjay_weight_adj* parent)
+void mockingjay_weight_adj_2::ReuseProfiler::print_profiler(mockingjay_weight_adj_2* parent)
 {
   const std::string& filename = "signature_reuse.csv";
 
@@ -763,7 +791,7 @@ void mockingjay_weight_adj::ReuseProfiler::print_profiler(mockingjay_weight_adj*
   out.close();
 }
 
-void mockingjay_weight_adj::MockingjayProfiler::record_bypass(champsim::address ip, access_type type)
+void mockingjay_weight_adj_2::MockingjayProfiler::record_bypass(champsim::address ip, access_type type)
 {
   if (type == access_type::WRITE || type == access_type::TRANSLATION) return;
 
@@ -771,7 +799,7 @@ void mockingjay_weight_adj::MockingjayProfiler::record_bypass(champsim::address 
   bypass_table[sig] += 1;
 }
 
-void mockingjay_weight_adj::MockingjayProfiler::record_update(long set, long way, champsim::address ip, champsim::address victim_addr, access_type type, bool hit, int insert_etr, int current_etr)
+void mockingjay_weight_adj_2::MockingjayProfiler::record_update(long set, long way, champsim::address ip, champsim::address victim_addr, access_type type, bool hit, int insert_etr, int current_etr)
 {
   assert((insert_etr <= INF_ETR && insert_etr >= 0) || type == access_type::WRITE);
   assert(current_etr <= INF_ETR && current_etr >= -1 * INF_ETR);
@@ -812,7 +840,7 @@ void mockingjay_weight_adj::MockingjayProfiler::record_update(long set, long way
   }
 }
 
-void mockingjay_weight_adj::MockingjayProfiler::print_profiler(mockingjay_weight_adj* parent)
+void mockingjay_weight_adj_2::MockingjayProfiler::print_profiler(mockingjay_weight_adj_2* parent)
 {
   using CountTable = std::unordered_map<Signature, std::vector<uint64_t>, SignatureKeyHash>;
   constexpr uint64_t MIN_SIGNATURE_COUNT = 30;
