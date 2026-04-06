@@ -148,6 +148,7 @@ void mockingjay_weight_adj::prefetch_detrain(uint32_t set, int way)
   }
   assert(accuracy_hits[temp.signature] >= 0);
   assert(accuracy_samples[temp.signature] > 0);
+  prefetch_sampled_cache[set][way].valid = false;
 }
 
 int mockingjay_weight_adj::temporal_difference(int init, int sample)
@@ -205,12 +206,13 @@ mockingjay_weight_adj::mockingjay_weight_adj(CACHE* _cache, long sets, long ways
                       LOG2_SAMPLED_SETS(LOG2_LLC_SIZE - 16),
                       HISTORY(8),
                       GRANULARITY(8),
-                      METADATA_HISTORY(64),
+                      METADATA_HISTORY(40),
                       METADATA_GRANULARITY(METADATA_HISTORY * GRANULARITY / HISTORY),
                       INF_RD(NUM_WAY * HISTORY - 1),
                       INF_ETR((NUM_WAY * HISTORY / GRANULARITY) - 1),
                       MAX_RD(INF_RD - 22),
                       METADATA_HISTORY_RATIO(METADATA_HISTORY / HISTORY),
+                      METADATA_ETR_RATIO(1.6),
                       SAMPLED_CACHE_WAYS(5),
                       LOG2_SAMPLED_CACHE_SETS(4),
                       SAMPLED_CACHE_TAG_BITS(31 - LOG2_LLC_SIZE),
@@ -267,13 +269,19 @@ long mockingjay_weight_adj::find_victim(uint32_t triggering_cpu, uint64_t instr_
   }
 
   // your eviction policy goes here
-  int max_etr = 0;
+  double max_etr = 0;
   int victim_way = 0;
   for (uint32_t way = 0; way < NUM_WAY; way++) {
-    if (abs(etr[set][way]) > max_etr ||
-          (abs(etr[set][way]) == max_etr &&
-            etr[set][way] < 0)) { //TECHNICALLY this logic is not correct. While this does prioritize negative values, it does prioritize negative values over other negative values.
-      max_etr = abs(etr[set][way]);
+
+    double way_etr;
+    if (metadata_sig[set][way] == METADATA_NO_SIG) way_etr = etr[set][way];
+    else if (abs(etr[set][way]) == INF_ETR) way_etr = etr[set][way];
+    else way_etr = etr[set][way] / METADATA_ETR_RATIO;
+
+    if (abs(way_etr) > max_etr ||
+          (abs(way_etr) == max_etr &&
+            way_etr < 0)) { //TECHNICALLY this logic is not correct. While this does prioritize negative values, it does prioritize negative values over other negative values.
+      max_etr = abs(way_etr);
       victim_way = way;
     }
 
@@ -289,7 +297,7 @@ long mockingjay_weight_adj::find_victim(uint32_t triggering_cpu, uint64_t instr_
   
   if (type == access_type::METADATA_STORE)
   {
-    if (!rdp.count(pc_signature) || rdp[pc_signature] > (INF_RD - 10) /*MAX_RD*/ || rdp[pc_signature] / GRANULARITY > max_etr 
+    if (!rdp.count(pc_signature) || rdp[pc_signature] > (INF_RD - 10) /*MAX_RD*/ || rdp[pc_signature] / GRANULARITY / METADATA_ETR_RATIO > max_etr 
         || !accuracy_hits.count(pc_signature) || (static_cast<double>(accuracy_hits[pc_signature]) / accuracy_samples[pc_signature] <= METADATA_USELESS_ACCURACY))
     {
       mockingjay_profiler.record_bypass(ip, type);
@@ -481,45 +489,45 @@ void mockingjay_weight_adj::update_replacement_state(uint32_t triggering_cpu, lo
 
           for (const auto& pref_addr : prefetch_addresses)
           {
-            uint64_t sampled_cache_index = get_prefetch_sampled_cache_index(pref_addr.to<uint64_t>());
-            uint64_t sampled_cache_tag = get_prefetch_sampled_cache_tag(pref_addr.to<uint64_t>());
-            int sampled_cache_way = search_prefetch_sampled_cache(sampled_cache_tag, sampled_cache_index);
+            uint64_t prefetch_sampled_cache_index = get_prefetch_sampled_cache_index(pref_addr.to<uint64_t>());
+            uint64_t prefetch_sampled_cache_tag = get_prefetch_sampled_cache_tag(pref_addr.to<uint64_t>());
+            int prefetch_sampled_cache_way = search_prefetch_sampled_cache(prefetch_sampled_cache_tag, prefetch_sampled_cache_index);
 
-            if (sampled_cache_way > -1)
+            if (prefetch_sampled_cache_way > -1)
             {
-              prefetch_detrain(sampled_cache_index, sampled_cache_way);
+              prefetch_detrain(prefetch_sampled_cache_index, prefetch_sampled_cache_way);
             }
 
             int lru_way = -1;
             int lru_rd = -1;
             for (int w = 0; w < PREFETCH_SAMPLED_CACHE_WAYS; w++)
             {
-              if (prefetch_sampled_cache[sampled_cache_index][w].valid == false)
+              if (prefetch_sampled_cache[prefetch_sampled_cache_index][w].valid == false)
               {
                 lru_way = w;
                 lru_rd = PREFETCH_SAMPLED_CACHE_INF + 1;
                 continue;
               }
 
-              uint64_t last_timestamp = prefetch_sampled_cache[sampled_cache_index][w].timestamp;
+              uint64_t last_timestamp = prefetch_sampled_cache[prefetch_sampled_cache_index][w].timestamp;
               int sample = prefetch_time_elapsed(last_timestamp);
 
               if (sample >= PREFETCH_SAMPLED_CACHE_INF) {
                 lru_way = w;
                 lru_rd = PREFETCH_SAMPLED_CACHE_INF + 1;
-                prefetch_detrain(sampled_cache_index, w);
+                prefetch_detrain(prefetch_sampled_cache_index, w);
               } else if (sample > lru_rd) {
                 lru_way = w;
                 lru_rd = sample;
               }
             }
-            prefetch_detrain(sampled_cache_index, lru_way);
+            prefetch_detrain(prefetch_sampled_cache_index, lru_way);
 
-            prefetch_sampled_cache[sampled_cache_index][lru_way].valid = true;
-            prefetch_sampled_cache[sampled_cache_index][lru_way].tag = sampled_cache_tag;
-            prefetch_sampled_cache[sampled_cache_index][lru_way].signature = previous_signature;
-            prefetch_sampled_cache[sampled_cache_index][lru_way].timestamp = prefetch_current_timestamp;
-            prefetch_sampled_cache[sampled_cache_index][lru_way].prefetched = false;
+            prefetch_sampled_cache[prefetch_sampled_cache_index][lru_way].valid = true;
+            prefetch_sampled_cache[prefetch_sampled_cache_index][lru_way].tag = prefetch_sampled_cache_tag;
+            prefetch_sampled_cache[prefetch_sampled_cache_index][lru_way].signature = previous_signature;
+            prefetch_sampled_cache[prefetch_sampled_cache_index][lru_way].timestamp = prefetch_current_timestamp;
+            prefetch_sampled_cache[prefetch_sampled_cache_index][lru_way].prefetched = false;
           }
         }
       }

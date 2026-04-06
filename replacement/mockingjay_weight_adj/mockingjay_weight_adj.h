@@ -29,6 +29,7 @@ class mockingjay_weight_adj : public champsim::modules::replacement {
   const int MAX_RD;
 
   const int METADATA_HISTORY_RATIO;
+  const double METADATA_ETR_RATIO;
 
   const int SAMPLED_CACHE_WAYS;
   const int LOG2_SAMPLED_CACHE_SETS;
@@ -97,7 +98,7 @@ class mockingjay_weight_adj : public champsim::modules::replacement {
 
   class ReuseProfiler
   {
-    const uint64_t MAX_REUSE = 512;
+    const uint64_t MAX_REUSE = 640;
 
     struct TrackerKey
     {
