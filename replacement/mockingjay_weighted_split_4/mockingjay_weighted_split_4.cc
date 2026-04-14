@@ -6,16 +6,16 @@
 #include <cmath>
 
 #include "champsim.h"
-#include "streamline.h"
+#include "mockingjay_weighted_split_4.h"
 
-bool streamline::is_sampled_set(long set)
+bool mockingjay_weighted_split_4::is_sampled_set(long set)
 {
   long mask_length = LOG2_LLC_SET - LOG2_SAMPLED_SETS;
   long mask = (1 << mask_length) - 1;
   return (set & mask) == ((set >> (LOG2_LLC_SET - mask_length)) & mask);
 }
 
-uint64_t streamline::CRC_HASH(uint64_t _blockAddress)
+uint64_t mockingjay_weighted_split_4::CRC_HASH(uint64_t _blockAddress)
 {
   static const unsigned long long crcPolynomial = 3988292384ULL;
   unsigned long long _returnVal = _blockAddress;
@@ -24,7 +24,7 @@ uint64_t streamline::CRC_HASH(uint64_t _blockAddress)
   return _returnVal;
 }
 
-uint64_t streamline::build_signature(uint32_t triggering_cpu, champsim::address ip, access_type type, uint8_t hit)
+uint64_t mockingjay_weighted_split_4::build_signature(uint32_t triggering_cpu, champsim::address ip, access_type type, uint8_t hit)
 {
   uint64_t signature;
   if (NUM_CPUS == 1) 
@@ -63,35 +63,35 @@ uint64_t streamline::build_signature(uint32_t triggering_cpu, champsim::address 
   return signature;
 }
 
-uint64_t streamline::get_sampled_cache_index(uint64_t full_addr)
+uint64_t mockingjay_weighted_split_4::get_sampled_cache_index(uint64_t full_addr)
 {
   full_addr = full_addr >> LOG2_BLOCK_SIZE;
   full_addr = (full_addr << (64 - (LOG2_SAMPLED_CACHE_SETS + LOG2_LLC_SET))) >> (64 - (LOG2_SAMPLED_CACHE_SETS + LOG2_LLC_SET));
   return full_addr;
 }
 
-uint64_t streamline::get_sampled_cache_tag(uint64_t x)
+uint64_t mockingjay_weighted_split_4::get_sampled_cache_tag(uint64_t x)
 {
   x >>= LOG2_LLC_SET + LOG2_BLOCK_SIZE + LOG2_SAMPLED_CACHE_SETS;
   x = (x << (64 - SAMPLED_CACHE_TAG_BITS)) >> (64 - SAMPLED_CACHE_TAG_BITS);
   return x;
 }
 
-uint64_t streamline::get_prefetch_sampled_cache_index(uint64_t full_addr)
+uint64_t mockingjay_weighted_split_4::get_prefetch_sampled_cache_index(uint64_t full_addr)
 {
   full_addr = full_addr >> LOG2_BLOCK_SIZE;
   full_addr = (full_addr << (64 - LOG2_PREFETCH_SAMPLED_CACHE_SETS)) >> (64 - LOG2_PREFETCH_SAMPLED_CACHE_SETS);
   return full_addr;
 }
 
-uint64_t streamline::get_prefetch_sampled_cache_tag(uint64_t x)
+uint64_t mockingjay_weighted_split_4::get_prefetch_sampled_cache_tag(uint64_t x)
 {
   x >>= LOG2_BLOCK_SIZE + LOG2_PREFETCH_SAMPLED_CACHE_SETS;
   x = (x << (64 - SAMPLED_CACHE_TAG_BITS)) >> (64 - SAMPLED_CACHE_TAG_BITS);
   return x;
 }
 
-int streamline::search_sampled_cache(uint64_t blockAddress, bool metadata, uint32_t set)
+int mockingjay_weighted_split_4::search_sampled_cache(uint64_t blockAddress, bool metadata, uint32_t set)
 {
   SampledCacheLine* sampled_set = metadata ? metadata_sampled_cache[set] : data_sampled_cache[set];
   for (int way = 0; way < SAMPLED_CACHE_WAYS; way++) {
@@ -102,7 +102,7 @@ int streamline::search_sampled_cache(uint64_t blockAddress, bool metadata, uint3
   return -1;
 }
 
-int streamline::search_prefetch_sampled_cache(uint64_t blockAddress, uint32_t set)
+int mockingjay_weighted_split_4::search_prefetch_sampled_cache(uint64_t blockAddress, uint32_t set)
 {
   SampledCacheLine* sampled_set = prefetch_sampled_cache[set];
   for (int way = 0; way < PREFETCH_SAMPLED_CACHE_WAYS; way++)
@@ -115,7 +115,7 @@ int streamline::search_prefetch_sampled_cache(uint64_t blockAddress, uint32_t se
   return -1;
 }
 
-void streamline::detrain(uint32_t set, int way, bool metadata)
+void mockingjay_weighted_split_4::detrain(uint32_t set, int way, bool metadata)
 {
   std::unordered_map<uint64_t, SampledCacheLine*>& sampled_cache = metadata ? metadata_sampled_cache : data_sampled_cache;
 
@@ -133,7 +133,7 @@ void streamline::detrain(uint32_t set, int way, bool metadata)
   sampled_cache[set][way].valid = false;
 }
 
-void streamline::prefetch_detrain(uint32_t set, int way)
+void mockingjay_weighted_split_4::prefetch_detrain(uint32_t set, int way)
 {
   SampledCacheLine temp = prefetch_sampled_cache[set][way];
   if (!temp.valid) return;
@@ -151,7 +151,7 @@ void streamline::prefetch_detrain(uint32_t set, int way)
   prefetch_sampled_cache[set][way].valid = false;
 }
 
-int streamline::temporal_difference(int init, int sample)
+int mockingjay_weighted_split_4::temporal_difference(int init, int sample)
 {
   if (sample > init) {
     int diff = sample - init;
@@ -168,14 +168,14 @@ int streamline::temporal_difference(int init, int sample)
   }
 }
 
-int streamline::increment_timestamp(int input)
+int mockingjay_weighted_split_4::increment_timestamp(int input)
 {
   input++;
   input = input % (1 << TIMESTAMP_BITS);
   return input;
 }
 
-int streamline::time_elapsed(int global, int local)
+int mockingjay_weighted_split_4::time_elapsed(int global, int local)
 {
   if (global >= local) {
     return global - local;
@@ -185,7 +185,7 @@ int streamline::time_elapsed(int global, int local)
   return global - local;
 }
 
-int streamline::prefetch_time_elapsed(int local)
+int mockingjay_weighted_split_4::prefetch_time_elapsed(int local)
 {
   if (prefetch_current_timestamp >= local) {
     return prefetch_current_timestamp - local;
@@ -194,14 +194,14 @@ int streamline::prefetch_time_elapsed(int local)
   return prefetch_current_timestamp + (1 << PREFETCH_TIMESTAMP_BITS) - local;
 }
 
-streamline::streamline(CACHE* _cache) : streamline(_cache, _cache->NUM_SET, _cache->NUM_WAY) {}
+mockingjay_weighted_split_4::mockingjay_weighted_split_4(CACHE* _cache) : mockingjay_weighted_split_4(_cache, _cache->NUM_SET, _cache->NUM_WAY) {}
 
-streamline::streamline(CACHE* _cache, long sets, long ways) 
+mockingjay_weighted_split_4::mockingjay_weighted_split_4(CACHE* _cache, long sets, long ways) 
                     : replacement(_cache),
                       cache(_cache),
                       NUM_SET(sets),
                       NUM_WAY(ways),
-                      METADATA_WAYS(1),
+                      METADATA_WAYS(4),
                       LOG2_LLC_SET(std::log2(NUM_SET)),
                       LOG2_LLC_SIZE(LOG2_LLC_SET + std::log2(NUM_WAY) + LOG2_BLOCK_SIZE),
                       LOG2_SAMPLED_SETS(LOG2_LLC_SIZE - 16),
@@ -258,7 +258,7 @@ streamline::streamline(CACHE* _cache, long sets, long ways)
   }
 }
 
-long streamline::find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const champsim::cache_block* current_set, champsim::address ip, champsim::address full_addr, access_type type)
+long mockingjay_weighted_split_4::find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const champsim::cache_block* current_set, champsim::address ip, champsim::address full_addr, access_type type)
 {
   assert(type != access_type::METADATA_LOAD);
 
@@ -360,7 +360,7 @@ long streamline::find_victim(uint32_t triggering_cpu, uint64_t instr_id, long se
   return victim_way;
 }
 
-void streamline::update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip, champsim::address victim_addr, access_type type, uint8_t hit, const std::shared_ptr<champsim::MetadataRequest>& meta_request, bool local_pref)
+void mockingjay_weighted_split_4::update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip, champsim::address victim_addr, access_type type, uint8_t hit, const std::shared_ptr<champsim::MetadataRequest>& meta_request, bool local_pref)
 {
   reuse_profiler.track_info(set, full_addr, ip, type, hit);
 
@@ -653,13 +653,13 @@ void streamline::update_replacement_state(uint32_t triggering_cpu, long set, lon
   }
 }
 
-void streamline::replacement_final_stats()
+void mockingjay_weighted_split_4::replacement_final_stats()
 {
   reuse_profiler.print_profiler(this);
   mockingjay_profiler.print_profiler(this);
 }
 
-void streamline::ReuseProfiler::track_info(long set, champsim::address full_addr, champsim::address ip, access_type type, bool hit)
+void mockingjay_weighted_split_4::ReuseProfiler::track_info(long set, champsim::address full_addr, champsim::address ip, access_type type, bool hit)
 {
   if (type == access_type::WRITE || type == access_type::TRANSLATION) return;
 
@@ -695,7 +695,7 @@ void streamline::ReuseProfiler::track_info(long set, champsim::address full_addr
   if (!metadata_access) set_age[set] += 1;
 }
 
-void streamline::ReuseProfiler::print_profiler(streamline* parent)
+void mockingjay_weighted_split_4::ReuseProfiler::print_profiler(mockingjay_weighted_split_4* parent)
 {
   const std::string& filename = "signature_reuse.csv";
 
@@ -806,7 +806,7 @@ void streamline::ReuseProfiler::print_profiler(streamline* parent)
   out.close();
 }
 
-void streamline::MockingjayProfiler::record_bypass(champsim::address ip, access_type type)
+void mockingjay_weighted_split_4::MockingjayProfiler::record_bypass(champsim::address ip, access_type type)
 {
   if (type == access_type::WRITE || type == access_type::TRANSLATION) return;
 
@@ -814,7 +814,7 @@ void streamline::MockingjayProfiler::record_bypass(champsim::address ip, access_
   bypass_table[sig] += 1;
 }
 
-void streamline::MockingjayProfiler::record_update(long set, long way, champsim::address ip, champsim::address victim_addr, access_type type, bool hit, int insert_etr, int current_etr)
+void mockingjay_weighted_split_4::MockingjayProfiler::record_update(long set, long way, champsim::address ip, champsim::address victim_addr, access_type type, bool hit, int insert_etr, int current_etr)
 {
   assert((insert_etr <= INF_ETR && insert_etr >= 0) || type == access_type::WRITE);
   assert(current_etr <= INF_ETR && current_etr >= -1 * INF_ETR);
@@ -855,7 +855,7 @@ void streamline::MockingjayProfiler::record_update(long set, long way, champsim:
   }
 }
 
-void streamline::MockingjayProfiler::print_profiler(streamline* parent)
+void mockingjay_weighted_split_4::MockingjayProfiler::print_profiler(mockingjay_weighted_split_4* parent)
 {
   using CountTable = std::unordered_map<Signature, std::vector<uint64_t>, SignatureKeyHash>;
   constexpr uint64_t MIN_SIGNATURE_COUNT = 30;

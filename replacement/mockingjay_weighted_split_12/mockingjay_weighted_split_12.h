@@ -1,5 +1,5 @@
-#ifndef REPLACEMENT_STREAMLINE_H
-#define REPLACEMENT_STREAMLINE_H
+#ifndef REPLACEMENT_MOCKINGJAY_WEIGHTED_SPLIT_12_H
+#define REPLACEMENT_MOCKINGJAY_WEIGHTED_SPLIT_12_H
 
 #include <deque>
 #include <unordered_map>
@@ -8,7 +8,7 @@
 #include "cache.h"
 #include "modules.h"
 
-class streamline : public champsim::modules::replacement {
+class mockingjay_weighted_split_12 : public champsim::modules::replacement {
   CACHE* cache = nullptr;
   
   const long NUM_SET;
@@ -166,7 +166,7 @@ class streamline : public champsim::modules::replacement {
   public:
 
     void track_info(long set, champsim::address full_addr, champsim::address ip, access_type type, bool hit);
-    void print_profiler(streamline* parent);
+    void print_profiler(mockingjay_weighted_split_12* parent);
 
     explicit ReuseProfiler(long num_sets) : set_age(num_sets, 0) {}
   };
@@ -216,7 +216,7 @@ class streamline : public champsim::modules::replacement {
 
     void record_bypass(champsim::address ip, access_type type);
     void record_update(long set, long way, champsim::address ip, champsim::address victim_addr, access_type type, bool hit, int insert_etr, int current_etr);
-    void print_profiler(streamline* parent);
+    void print_profiler(mockingjay_weighted_split_12* parent);
 
     explicit MockingjayProfiler(long num_sets, long num_ways, int inf_etr)
         : INF_ETR(inf_etr),
@@ -230,8 +230,8 @@ class streamline : public champsim::modules::replacement {
 
 public:
 
-  explicit streamline(CACHE* cache);
-  streamline(CACHE* cache, long sets, long ways);
+  explicit mockingjay_weighted_split_12(CACHE* cache);
+  mockingjay_weighted_split_12(CACHE* cache, long sets, long ways);
 
   long find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const champsim::cache_block* current_set, champsim::address ip, champsim::address full_addr, access_type type);
   void update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip, champsim::address victim_addr, access_type type, uint8_t hit, const std::shared_ptr<champsim::MetadataRequest>& meta_request, bool local_pref);

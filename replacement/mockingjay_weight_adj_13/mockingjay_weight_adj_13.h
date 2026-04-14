@@ -1,5 +1,5 @@
-#ifndef REPLACEMENT_STREAMLINE_H
-#define REPLACEMENT_STREAMLINE_H
+#ifndef REPLACEMENT_MOCKINGJAY_WEIGHT_ADJ_13_H
+#define REPLACEMENT_MOCKINGJAY_WEIGHT_ADJ_13_H
 
 #include <deque>
 #include <unordered_map>
@@ -8,13 +8,11 @@
 #include "cache.h"
 #include "modules.h"
 
-class streamline : public champsim::modules::replacement {
+class mockingjay_weight_adj_13 : public champsim::modules::replacement {
   CACHE* cache = nullptr;
   
   const long NUM_SET;
   const long NUM_WAY;
-
-  const uint32_t METADATA_WAYS; 
   
   const int LOG2_LLC_SET;
   const int LOG2_LLC_SIZE;
@@ -48,7 +46,6 @@ class streamline : public champsim::modules::replacement {
   const int PREFETCH_TIMESTAMP_BITS;
 
   const int METADATA_SHIFT_ACCURACY;
-  const double METADATA_USELESS_ACCURACY;
 
   const uint64_t METADATA_NO_SIG = 0xdeadbeef;
   
@@ -96,6 +93,8 @@ class streamline : public champsim::modules::replacement {
   int search_prefetch_sampled_cache(uint64_t blockAddress, uint32_t set);
   void prefetch_detrain(uint32_t set, int way);
   int prefetch_time_elapsed(int local);
+
+  double calculate_value(bool metadata, int etr, double accuracy = 0.0);
 
   class ReuseProfiler
   {
@@ -166,7 +165,7 @@ class streamline : public champsim::modules::replacement {
   public:
 
     void track_info(long set, champsim::address full_addr, champsim::address ip, access_type type, bool hit);
-    void print_profiler(streamline* parent);
+    void print_profiler(mockingjay_weight_adj_13* parent);
 
     explicit ReuseProfiler(long num_sets) : set_age(num_sets, 0) {}
   };
@@ -216,7 +215,7 @@ class streamline : public champsim::modules::replacement {
 
     void record_bypass(champsim::address ip, access_type type);
     void record_update(long set, long way, champsim::address ip, champsim::address victim_addr, access_type type, bool hit, int insert_etr, int current_etr);
-    void print_profiler(streamline* parent);
+    void print_profiler(mockingjay_weight_adj_13* parent);
 
     explicit MockingjayProfiler(long num_sets, long num_ways, int inf_etr)
         : INF_ETR(inf_etr),
@@ -230,8 +229,8 @@ class streamline : public champsim::modules::replacement {
 
 public:
 
-  explicit streamline(CACHE* cache);
-  streamline(CACHE* cache, long sets, long ways);
+  explicit mockingjay_weight_adj_13(CACHE* cache);
+  mockingjay_weight_adj_13(CACHE* cache, long sets, long ways);
 
   long find_victim(uint32_t triggering_cpu, uint64_t instr_id, long set, const champsim::cache_block* current_set, champsim::address ip, champsim::address full_addr, access_type type);
   void update_replacement_state(uint32_t triggering_cpu, long set, long way, champsim::address full_addr, champsim::address ip, champsim::address victim_addr, access_type type, uint8_t hit, const std::shared_ptr<champsim::MetadataRequest>& meta_request, bool local_pref);
